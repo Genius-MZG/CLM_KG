@@ -14,7 +14,7 @@ env:
   PYTHONUNBUFFERED: "1"
 
 concurrency:
-  group: recover-na-event-data-v4-${{ github.ref }}
+  group: recover-na-event-data-v5-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -33,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas requests remotezip
+          pip install pandas requests remotezip matplotlib
 
       - name: Recover and audit public data
         run: python research/recover_na_event_data.py
@@ -56,6 +56,9 @@ jobs:
       - name: Prepare validated figure inputs
         run: python research/prepare_figure_inputs.py
 
+      - name: Build figure specifications and gated exports
+        run: python research/render_supported_figures.py
+
       - name: Show recovery status
         if: always()
         run: |
@@ -67,6 +70,7 @@ jobs:
           cat research/recovered_data/source_access_probe/public_s1_roda_probe.json || true
           cat research/recovered_data/figure_ready/font_gate.json || true
           cat research/recovered_data/figure_ready/figure_preparation_status.json || true
+          cat research/recovered_data/figure_outputs/figure_qa_status.json || true
 
       - name: Upload recovery artifact
         if: always()
