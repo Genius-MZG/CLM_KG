@@ -14,7 +14,7 @@ env:
   PYTHONUNBUFFERED: "1"
 
 concurrency:
-  group: recover-na-event-data-v3-${{ github.ref }}
+  group: recover-na-event-data-v4-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -53,6 +53,9 @@ jobs:
         timeout-minutes: 5
         run: python research/probe_public_s1_roda.py
 
+      - name: Prepare validated figure inputs
+        run: python research/prepare_figure_inputs.py
+
       - name: Show recovery status
         if: always()
         run: |
@@ -62,6 +65,8 @@ jobs:
           cat research/recovered_data/opera_rtc_catalog/access_probe/opera_rtc_access_probe.json || true
           cat research/recovered_data/source_access_probe/asf_source_access_probe.json || true
           cat research/recovered_data/source_access_probe/public_s1_roda_probe.json || true
+          cat research/recovered_data/figure_ready/font_gate.json || true
+          cat research/recovered_data/figure_ready/figure_preparation_status.json || true
 
       - name: Upload recovery artifact
         if: always()
