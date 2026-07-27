@@ -1,0 +1,81 @@
+name: Inspect North America event RTC
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  bind-and-inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas requests remotezip shapely numpy h5py
+
+      - name: Recover public source data
+        run: python research/recover_na_event_data.py
+
+      - name: Bind five Sentinel-1 phases
+        run: python research/select_na_event_scenes.py
+
+      - name: Probe first selected OPERA RTC product
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p research/rtc_probe
+          URL=$(python - <<'PY'
+          import pandas as pd
+          p='research/phase_binding/opera_rtc_products_for_selected_dates.csv'
+          df=pd.read_csv(p)
+          print(df.iloc[0]['url'])
+          PY
+          )
+          printf '%s\n' "$URL" > research/rtc_probe/source_url.txt
+          curl -L --fail --retry 3 --connect-timeout 30 --max-time 3600 -o research/rtc_probe/pilot.h5 "$URL"
+          sha256sum research/rtc_probe/pilot.h5 > research/rtc_probe/pilot.sha256
+          stat --printf='%s\n' research/rtc_probe/pilot.h5 > research/rtc_probe/pilot.bytes
+          python - <<'PY'
+          import json
+          import h5py
+          from pathlib import Path
+          path=Path('research/rtc_probe/pilot.h5')
+          rows=[]
+          with h5py.File(path,'r') as f:
+              def visitor(name,obj):
+                  row={'name':name,'type':type(obj).__name__}
+                  if isinstance(obj,h5py.Dataset):
+                      row.update({'shape':list(obj.shape),'dtype':str(obj.dtype),'chunks':None if obj.chunks is None else list(obj.chunks),'compression':obj.compression})
+                  rows.append(row)
+              f.visititems(visitor)
+              attrs={str(k):str(v) for k,v in f.attrs.items()}
+          Path('research/rtc_probe/hdf5_inventory.json').write_text(json.dumps({'root_attributes':attrs,'objects':rows},indent=2)+'\n')
+          print(json.dumps({'objects':len(rows),'bytes':path.stat().st_size},indent=2))
+          PY
+          rm research/rtc_probe/pilot.h5
+
+      - name: Upload phase binding and RTC probe
+        uses: actions/upload-artifact@v4
+        with:
+          name: north-america-event-phase-binding-and-rtc-probe
+          path: |
+            research/phase_binding/
+            research/rtc_probe/
+          if-no-files-found: error
+          retention-days: 14
