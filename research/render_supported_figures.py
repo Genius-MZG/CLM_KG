@@ -32,6 +32,10 @@ STATION_LABELS = {
     "GRDC_4146080": "GRDC_4146080 · Near Mount Vernon",
     "GRDC_4146081": "GRDC_4146081 · Near Concrete",
 }
+STATION_ROLE_LABELS = {
+    "GRDC_4146080": "下游 · Near Mount Vernon",
+    "GRDC_4146081": "上游 · Near Concrete",
+}
 BASIN_EDGE = ["#4477AA", "#CC6677"]
 BASIN_FILL = ["#DDE8F2", "#F2E0E4"]
 FLOW_COLORS = {"GRDC_4146080": "#4477AA", "GRDC_4146081": "#CC6677"}
@@ -90,7 +94,7 @@ def render_map(basins: dict, stations: pd.DataFrame, western_font: str, chinese_
                 edgecolor=BASIN_EDGE[i % len(BASIN_EDGE)],
                 linewidth=0.9,
                 alpha=0.65,
-                label=STATION_LABELS.get(station_id, station_id) + " basin" if first else None,
+                label=STATION_ROLE_LABELS.get(station_id, station_id) + " basin" if first else None,
                 zorder=1,
             )
             first = False
@@ -103,7 +107,7 @@ def render_map(basins: dict, stations: pd.DataFrame, western_font: str, chinese_
         ax.scatter([row[lon_col]], [row[lat_col]], s=34, marker="o", color=color,
                    edgecolor="white", linewidth=0.6, zorder=3)
         ax.annotate(
-            station_id,
+            STATION_ROLE_LABELS.get(station_id, station_id),
             (row[lon_col], row[lat_col]),
             xytext=(5, 5),
             textcoords="offset points",
@@ -138,27 +142,45 @@ def render_hydrograph(flow: pd.DataFrame, phase: pd.DataFrame, western_font: str
             group["discharge_m3s"],
             linewidth=1.15,
             color=FLOW_COLORS.get(station),
-            label=STATION_LABELS.get(station, station),
+            label=STATION_ROLE_LABELS.get(station, station),
         )
+
+    label_y = {
+        "baseline": 0.985,
+        "rising": 0.925,
+        "peak": 0.985,
+        "early_recession": 0.925,
+        "late_recession": 0.985,
+    }
+    label_ha = {
+        "baseline": "right",
+        "rising": "right",
+        "peak": "left",
+        "early_recession": "right",
+        "late_recession": "right",
+    }
     for phase_name, date in PHASE_DATES.items():
-        ax.axvline(pd.Timestamp(date), linewidth=0.7, linestyle="--", color="#666666")
+        timestamp = pd.Timestamp(date)
+        ax.axvline(timestamp, linewidth=0.7, linestyle="--", color="#666666")
         ax.text(
-            pd.Timestamp(date),
-            0.98,
+            timestamp,
+            label_y[phase_name],
             PHASE_LABELS[phase_name],
             rotation=90,
             transform=ax.get_xaxis_transform(),
-            ha="right",
+            ha=label_ha[phase_name],
             va="top",
             fontsize=7,
             fontfamily=chinese_font,
         )
+
     ax.set_xlabel("Date", fontfamily=western_font, fontsize=9)
     ax.set_ylabel(r"Discharge (m$^3$ s$^{-1}$)", fontfamily=western_font, fontsize=9)
     ax.set_title("双站水文过程与五期卫星观测", fontfamily=chinese_font, fontsize=10)
-    ax.legend(frameon=False, prop={"family": western_font, "size": 8})
+    ax.legend(frameon=False, prop={"family": western_font, "size": 8}, loc="upper left")
     apply_tick_font(ax, western_font)
     ax.margins(x=0.01)
+    ax.set_ylim(bottom=0)
     fig.tight_layout()
     outputs = []
     for ext, dpi in [("svg", None), ("pdf", None), ("png", 300), ("tiff", 600)]:
@@ -203,6 +225,8 @@ def main() -> None:
         "selected_chinese_family": gate.get("selected_chinese_family"),
         "unit_conversion_verified": unit_conversion.get("source_units", "").startswith("mm day-1"),
         "peak_discharge_range_m3s": [float(flow["discharge_m3s"].min()), float(flow["discharge_m3s"].max())],
+        "phase_dates_strictly_increasing": list(PHASE_DATES.values()) == sorted(PHASE_DATES.values()),
+        "phase_labels_unique": len(set(PHASE_LABELS.values())) == len(PHASE_LABELS),
     }
     qa["data_qa_passed"] = bool(
         qa["flow_station_count"] == 2
@@ -213,6 +237,8 @@ def main() -> None:
         and qa["station_metadata_rows"] >= 2
         and qa["unit_conversion_verified"]
         and qa["peak_discharge_range_m3s"][1] > 100.0
+        and qa["phase_dates_strictly_increasing"]
+        and qa["phase_labels_unique"]
     )
 
     specifications = {
