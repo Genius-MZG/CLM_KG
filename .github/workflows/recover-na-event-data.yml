@@ -14,13 +14,13 @@ env:
   PYTHONUNBUFFERED: "1"
 
 concurrency:
-  group: recover-na-event-data
-  cancel-in-progress: false
+  group: recover-na-event-data-v2-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   recover:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 35
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -45,6 +45,7 @@ jobs:
         run: python research/probe_opera_rtc_access.py
 
       - name: Probe ASF GRD and burst access
+        timeout-minutes: 3
         run: python research/probe_asf_grd_burst_access.py
 
       - name: Show recovery status
