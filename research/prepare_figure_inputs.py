@@ -21,6 +21,8 @@ PHASE_DATES = {
 
 WESTERN_ALLOWED = {"Times New Roman"}
 CHINESE_ALLOWED = {"KaiTi", "STKaiti", "AR PL KaitiM GB"}
+SECONDS_PER_DAY = 86400.0
+MM_KM2_TO_M3 = 1000.0
 
 
 def sha256(path: Path) -> str:
@@ -55,6 +57,18 @@ def find_exact(records: list[dict[str, str]], allowed: set[str]) -> list[dict[st
     return [r for r in records if r.get("family") in allowed]
 
 
+def build_area_lookup(meta: pd.DataFrame) -> dict[str, float]:
+    area_col = "area_calc" if "area_calc" in meta.columns else "area"
+    lookup: dict[str, float] = {}
+    for _, row in meta.iterrows():
+        station_id = f"GRDC_{int(float(row['grdc_no']))}"
+        area_km2 = float(row[area_col])
+        if not (100.0 <= area_km2 <= 1_000_000.0):
+            raise ValueError(f"Implausible catchment area for {station_id}: {area_km2} km2")
+        lookup[station_id] = area_km2
+    return lookup
+
+
 def main() -> None:
     flow_path = ROOT / "grdc_pair_event_window_long.csv"
     meta_path = ROOT / "grdc_pair_station_metadata.csv"
@@ -66,8 +80,27 @@ def main() -> None:
     if missing:
         raise FileNotFoundError("Missing required recovered inputs: " + ", ".join(missing))
 
+    meta = pd.read_csv(meta_path)
+    area_lookup = build_area_lookup(meta)
+
     flow = pd.read_csv(flow_path, parse_dates=["date"])
     flow = flow.sort_values(["station_id", "date"]).reset_index(drop=True)
+
+    # Caravan standardizes streamflow to catchment-normalized runoff in mm/day.
+    # The upstream recovery file historically called this column discharge_m3s;
+    # preserve the values under their correct name and convert using verified basin area.
+    flow = flow.rename(columns={"discharge_m3s": "streamflow_mm_day"})
+    flow["catchment_area_km2"] = flow["station_id"].map(area_lookup)
+    if flow["catchment_area_km2"].isna().any():
+        missing_ids = sorted(flow.loc[flow["catchment_area_km2"].isna(), "station_id"].unique())
+        raise ValueError(f"Missing verified catchment area for: {missing_ids}")
+    flow["discharge_m3s"] = (
+        flow["streamflow_mm_day"]
+        * flow["catchment_area_km2"]
+        * MM_KM2_TO_M3
+        / SECONDS_PER_DAY
+    )
+
     phase_rows = []
     for phase, date in PHASE_DATES.items():
         day = pd.Timestamp(date)
@@ -77,6 +110,8 @@ def main() -> None:
                 "phase": phase,
                 "date": date,
                 "station_id": station,
+                "streamflow_mm_day": None if hit.empty else float(hit.iloc[0]["streamflow_mm_day"]),
+                "catchment_area_km2": None if hit.empty else float(hit.iloc[0]["catchment_area_km2"]),
                 "discharge_m3s": None if hit.empty else float(hit.iloc[0]["discharge_m3s"]),
             })
     pd.DataFrame(phase_rows).to_csv(OUT / "figure02_phase_discharge.csv", index=False)
@@ -88,6 +123,8 @@ def main() -> None:
         peak_rows.append({
             "station_id": station,
             "peak_date": row["date"].date().isoformat(),
+            "peak_streamflow_mm_day": float(row["streamflow_mm_day"]),
+            "catchment_area_km2": float(row["catchment_area_km2"]),
             "peak_discharge_m3s": float(row["discharge_m3s"]),
         })
     pd.DataFrame(peak_rows).to_csv(OUT / "figure02_station_peaks.csv", index=False)
@@ -113,6 +150,18 @@ def main() -> None:
     }
     (OUT / "font_gate.json").write_text(json.dumps(font_report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
+    unit_report = {
+        "source_variable": "streamflow",
+        "source_units": "mm day-1 (Caravan catchment-normalized runoff)",
+        "output_variable": "discharge_m3s",
+        "conversion": "Q_m3s = runoff_mm_day * catchment_area_km2 * 1000 / 86400",
+        "area_source": "GRDC ArcGIS area_calc (fallback: area)",
+        "station_areas_km2": area_lookup,
+    }
+    (OUT / "streamflow_unit_conversion.json").write_text(
+        json.dumps(unit_report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
     manifest = []
     for path in sorted(OUT.glob("*")):
         if path.is_file():
@@ -124,6 +173,7 @@ def main() -> None:
         "figure02_hydrograph_ready": True,
         "figure01_geometry_ready": basin_path.exists() and meta_path.exists(),
         "figure03_catalogue_binding_ready": not rtc.empty,
+        "streamflow_units_corrected": True,
         "formal_export_allowed": font_report["formal_export_allowed"],
         "formal_export_blocker": None if font_report["formal_export_allowed"] else "Exact Times New Roman and approved KaiTi font are required before formal export.",
         "missing_raster_blocker": "Scientific RTC raster layers remain inaccessible without Earthdata credentials or original HPC outputs.",
