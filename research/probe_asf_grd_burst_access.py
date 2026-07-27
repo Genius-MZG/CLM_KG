@@ -17,7 +17,26 @@ READ_TIMEOUT = 20
 MAX_WORKERS = 8
 
 
-def probe(url: str) -> dict[str, object]:
+def classify_payload(kind: str, status_code: int, content_type: str, body: bytes, final_url: str) -> dict[str, object]:
+    prefix = body[:16]
+    lower_type = (content_type or "").lower()
+    lower_url = (final_url or "").lower()
+    is_html = prefix.lstrip().lower().startswith((b"<!doctype html", b"<html")) or "text/html" in lower_type
+    is_tiff = prefix.startswith((b"II*\x00", b"MM\x00*"))
+    is_zip = prefix.startswith(b"PK\x03\x04")
+    auth_challenge = "urs.earthdata.nasa.gov" in lower_url or status_code in (401, 403) or is_html
+    expected_signature = is_tiff if kind.startswith("BURST_") else is_zip
+    return {
+        "is_html": is_html,
+        "is_tiff": is_tiff,
+        "is_zip": is_zip,
+        "auth_challenge": auth_challenge,
+        "expected_signature": expected_signature,
+        "ok": status_code in (200, 206) and len(body) > 0 and expected_signature and not auth_challenge,
+    }
+
+
+def probe(kind: str, url: str) -> dict[str, object]:
     headers = {
         "Range": f"bytes=0-{RANGE_BYTES - 1}",
         "User-Agent": "NorthAmericaFloodplainResearch/1.0",
@@ -39,18 +58,26 @@ def probe(url: str) -> dict[str, object]:
                 body.extend(chunk[:need])
                 if len(body) >= RANGE_BYTES:
                     break
+            payload = bytes(body)
+            classification = classify_payload(
+                kind,
+                r.status_code,
+                r.headers.get("content-type", ""),
+                payload,
+                r.url,
+            )
             return {
                 "status_code": r.status_code,
-                "ok": r.status_code in (200, 206) and len(body) > 0,
                 "final_url": r.url,
                 "content_type": r.headers.get("content-type"),
                 "content_range": r.headers.get("content-range"),
                 "content_length_header": r.headers.get("content-length"),
                 "accept_ranges": r.headers.get("accept-ranges"),
-                "bytes_received": len(body),
+                "bytes_received": len(payload),
                 "redirect_history": [x.status_code for x in r.history],
-                "prefix_hex": bytes(body[:16]).hex(),
+                "prefix_hex": payload[:16].hex(),
                 "range_honored": r.status_code == 206 or r.headers.get("content-range") is not None,
+                **classification,
             }
     except Exception as exc:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
@@ -89,7 +116,7 @@ def main() -> None:
     targets = selected_targets(df)
     records: list[dict[str, object]] = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        future_map = {pool.submit(probe, target["url"]): target for target in targets}
+        future_map = {pool.submit(probe, target["kind"], target["url"]): target for target in targets}
         for future in as_completed(future_map):
             target = future_map[future]
             result = future.result()
@@ -97,19 +124,19 @@ def main() -> None:
 
     records.sort(key=lambda r: (str(r["date"]), str(r["kind"])))
     pd.DataFrame(records).to_csv(OUT / "asf_source_access_probe.csv", index=False)
+    grd_records = [r for r in records if r["kind"] == "GRD_HD"]
+    burst_records = [r for r in records if str(r["kind"]).startswith("BURST_")]
     report = {
-        "probe_type": "bounded unauthenticated HTTP range GET",
+        "probe_type": "bounded unauthenticated HTTP range GET with payload signature validation",
         "range_bytes": RANGE_BYTES,
         "connect_timeout_seconds": CONNECT_TIMEOUT,
         "read_timeout_seconds": READ_TIMEOUT,
         "max_workers": MAX_WORKERS,
         "records": records,
-        "all_grd_accessible": bool(records) and all(
-            bool(r.get("ok")) for r in records if r["kind"] == "GRD_HD"
-        ),
-        "all_bursts_accessible": bool(records) and all(
-            bool(r.get("ok")) for r in records if str(r["kind"]).startswith("BURST_")
-        ),
+        "all_grd_accessible": bool(grd_records) and all(bool(r.get("ok")) for r in grd_records),
+        "all_bursts_accessible": bool(burst_records) and all(bool(r.get("ok")) for r in burst_records),
+        "authentication_blocked_records": sum(bool(r.get("auth_challenge")) for r in records),
+        "interpretation": "HTTP 200 is not sufficient: Earthdata login HTML is rejected. BURST targets must begin with a TIFF signature and GRD targets with a ZIP signature.",
     }
     (OUT / "asf_source_access_probe.json").write_text(
         json.dumps(report, indent=2) + "\n", encoding="utf-8"
