@@ -19,6 +19,9 @@ PHASE_DATES = {
     "late_recession": "2017-12-19",
 }
 
+WESTERN_ALLOWED = {"Times New Roman"}
+CHINESE_ALLOWED = {"KaiTi", "STKaiti", "AR PL KaitiM GB"}
+
 
 def sha256(path: Path) -> str:
     h = hashlib.sha256()
@@ -28,11 +31,28 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def fc_match(name: str) -> str:
+def installed_fonts() -> list[dict[str, str]]:
     try:
-        return subprocess.check_output(["fc-match", "-f", "%{family}|%{file}\n", name], text=True).strip()
+        output = subprocess.check_output(
+            ["fc-list", "-f", "%{family[0]}|%{file}\n"],
+            text=True,
+            stderr=subprocess.STDOUT,
+        )
     except Exception as exc:
-        return f"ERROR:{type(exc).__name__}:{exc}"
+        return [{"family": f"ERROR:{type(exc).__name__}:{exc}", "file": ""}]
+    records: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for line in output.splitlines():
+        family, sep, file_path = line.partition("|")
+        key = (family.strip(), file_path.strip())
+        if sep and key not in seen:
+            seen.add(key)
+            records.append({"family": key[0], "file": key[1]})
+    return records
+
+
+def find_exact(records: list[dict[str, str]], allowed: set[str]) -> list[dict[str, str]]:
+    return [r for r in records if r.get("family") in allowed]
 
 
 def main() -> None:
@@ -77,15 +97,20 @@ def main() -> None:
     cols = [c for c in ["phase", "phase_date", "product_name", "burst_id", "platform", "track", "flight_direction", "urls_json"] if c in rtc.columns]
     rtc[cols].to_csv(OUT / "figure03_rtc_product_binding.csv", index=False)
 
+    fonts = installed_fonts()
+    western_matches = find_exact(fonts, WESTERN_ALLOWED)
+    chinese_matches = find_exact(fonts, CHINESE_ALLOWED)
     font_report = {
-        "required_western_font": "Times New Roman",
-        "required_chinese_font": "KaiTi/STKaiti/AR PL KaitiM GB",
-        "times_new_roman_match": fc_match("Times New Roman"),
-        "kaiti_match": fc_match("AR PL KaitiM GB"),
+        "required_western_font": sorted(WESTERN_ALLOWED),
+        "required_chinese_font": sorted(CHINESE_ALLOWED),
+        "western_exact_matches": western_matches,
+        "chinese_exact_matches": chinese_matches,
+        "times_new_roman_exact": bool(western_matches),
+        "kaiti_available": bool(chinese_matches),
+        "selected_western_family": western_matches[0]["family"] if western_matches else None,
+        "selected_chinese_family": chinese_matches[0]["family"] if chinese_matches else None,
+        "formal_export_allowed": bool(western_matches and chinese_matches),
     }
-    font_report["times_new_roman_exact"] = font_report["times_new_roman_match"].lower().startswith("times new roman|")
-    font_report["kaiti_available"] = "kaiti" in font_report["kaiti_match"].lower() or "kai" in font_report["kaiti_match"].lower()
-    font_report["formal_export_allowed"] = bool(font_report["times_new_roman_exact"] and font_report["kaiti_available"])
     (OUT / "font_gate.json").write_text(json.dumps(font_report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
     manifest = []
