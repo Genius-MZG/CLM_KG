@@ -41,12 +41,16 @@ jobs:
       - name: Recover OPERA RTC catalogue
         run: python research/recover_opera_rtc_catalog.py
 
+      - name: Probe OPERA RTC raster access
+        run: python research/probe_opera_rtc_access.py
+
       - name: Show recovery status
         if: always()
         run: |
-          find research/recovered_data -maxdepth 4 -type f -printf '%p %s bytes\n' | sort || true
+          find research/recovered_data -maxdepth 5 -type f -printf '%p %s bytes\n' | sort || true
           cat research/recovered_data/recovery_status.json || true
           cat research/recovered_data/opera_rtc_catalog/opera_rtc_catalog_status.json || true
+          cat research/recovered_data/opera_rtc_catalog/access_probe/opera_rtc_access_probe.json || true
 
       - name: Upload recovery artifact
         if: always()
