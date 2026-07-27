@@ -43,6 +43,12 @@ def iter_rings(geometry: dict):
                 yield ring
 
 
+def apply_tick_font(ax, family: str) -> None:
+    for label in [*ax.get_xticklabels(), *ax.get_yticklabels()]:
+        label.set_fontfamily(family)
+        label.set_fontsize(8)
+
+
 def render_map(basins: dict, stations: pd.DataFrame, western_font: str, chinese_font: str) -> list[Path]:
     fig, ax = plt.subplots(figsize=(7.0866, 4.8))
     for feature in basins.get("features", []):
@@ -57,10 +63,11 @@ def render_map(basins: dict, stations: pd.DataFrame, western_font: str, chinese_
     ax.scatter(stations[lon_col], stations[lat_col], s=28, marker="o", zorder=3)
     for _, row in stations.iterrows():
         label = f"GRDC_{int(float(row['grdc_no']))}"
-        ax.annotate(label, (row[lon_col], row[lat_col]), xytext=(4, 4), textcoords="offset points", fontsize=8, fontname=western_font)
-    ax.set_xlabel("Longitude", fontname=western_font)
-    ax.set_ylabel("Latitude", fontname=western_font)
-    ax.set_title("研究河段与观测站", fontname=chinese_font)
+        ax.annotate(label, (row[lon_col], row[lat_col]), xytext=(4, 4), textcoords="offset points", fontsize=8, fontfamily=western_font)
+    ax.set_xlabel("Longitude", fontfamily=western_font, fontsize=9)
+    ax.set_ylabel("Latitude", fontfamily=western_font, fontsize=9)
+    ax.set_title("研究河段与观测站", fontfamily=chinese_font, fontsize=10)
+    apply_tick_font(ax, western_font)
     ax.set_aspect("equal", adjustable="datalim")
     ax.grid(False)
     fig.tight_layout()
@@ -80,11 +87,12 @@ def render_hydrograph(flow: pd.DataFrame, phase: pd.DataFrame, western_font: str
     for phase_name, date in PHASE_DATES.items():
         ax.axvline(pd.Timestamp(date), linewidth=0.7, linestyle="--")
         ax.text(pd.Timestamp(date), 0.98, phase_name.replace("_", " "), rotation=90,
-                transform=ax.get_xaxis_transform(), ha="right", va="top", fontsize=7, fontname=western_font)
-    ax.set_xlabel("Date", fontname=western_font)
-    ax.set_ylabel(r"Discharge (m$^3$ s$^{-1}$)", fontname=western_font)
-    ax.set_title("双站水文过程与五期卫星观测", fontname=chinese_font)
+                transform=ax.get_xaxis_transform(), ha="right", va="top", fontsize=7, fontfamily=western_font)
+    ax.set_xlabel("Date", fontfamily=western_font, fontsize=9)
+    ax.set_ylabel(r"Discharge (m$^3$ s$^{-1}$)", fontfamily=western_font, fontsize=9)
+    ax.set_title("双站水文过程与五期卫星观测", fontfamily=chinese_font, fontsize=10)
     ax.legend(frameon=False, prop={"family": western_font, "size": 8})
+    apply_tick_font(ax, western_font)
     fig.tight_layout()
     outputs = []
     for ext, dpi in [("svg", None), ("pdf", None), ("png", 300), ("tiff", 600)]:
@@ -122,6 +130,8 @@ def main() -> None:
         "basin_feature_count": int(len(basins.get("features", []))),
         "station_metadata_rows": int(len(stations)),
         "formal_export_allowed": bool(gate.get("formal_export_allowed")),
+        "selected_western_family": gate.get("selected_western_family"),
+        "selected_chinese_family": gate.get("selected_chinese_family"),
     }
     qa["data_qa_passed"] = bool(
         qa["flow_station_count"] == 2
@@ -149,8 +159,10 @@ def main() -> None:
 
     rendered: list[Path] = []
     if qa["data_qa_passed"] and qa["formal_export_allowed"]:
-        western = "Times New Roman"
-        chinese = gate["kaiti_match"].split("|", 1)[0].split(",", 1)[0]
+        western = gate["selected_western_family"]
+        chinese = gate["selected_chinese_family"]
+        if western != "Times New Roman" or chinese not in {"KaiTi", "STKaiti", "AR PL KaitiM GB"}:
+            raise RuntimeError("Font gate reported an unapproved family")
         rendered.extend(render_map(basins, stations, western, chinese))
         rendered.extend(render_hydrograph(flow, phase, western, chinese))
 
