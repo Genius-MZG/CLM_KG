@@ -38,11 +38,15 @@ jobs:
       - name: Recover and audit public data
         run: python research/recover_na_event_data.py
 
+      - name: Recover OPERA RTC catalogue
+        run: python research/recover_opera_rtc_catalog.py
+
       - name: Show recovery status
         if: always()
         run: |
-          find research/recovered_data -maxdepth 3 -type f -printf '%p %s bytes\n' | sort || true
+          find research/recovered_data -maxdepth 4 -type f -printf '%p %s bytes\n' | sort || true
           cat research/recovered_data/recovery_status.json || true
+          cat research/recovered_data/opera_rtc_catalog/opera_rtc_catalog_status.json || true
 
       - name: Upload recovery artifact
         if: always()
