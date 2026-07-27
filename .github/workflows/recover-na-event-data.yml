@@ -44,6 +44,9 @@ jobs:
       - name: Probe OPERA RTC raster access
         run: python research/probe_opera_rtc_access.py
 
+      - name: Probe ASF GRD and burst access
+        run: python research/probe_asf_grd_burst_access.py
+
       - name: Show recovery status
         if: always()
         run: |
@@ -51,6 +54,7 @@ jobs:
           cat research/recovered_data/recovery_status.json || true
           cat research/recovered_data/opera_rtc_catalog/opera_rtc_catalog_status.json || true
           cat research/recovered_data/opera_rtc_catalog/access_probe/opera_rtc_access_probe.json || true
+          cat research/recovered_data/source_access_probe/asf_source_access_probe.json || true
 
       - name: Upload recovery artifact
         if: always()
