@@ -14,13 +14,13 @@ env:
   PYTHONUNBUFFERED: "1"
 
 concurrency:
-  group: recover-na-event-data-v2-${{ github.ref }}
+  group: recover-na-event-data-v3-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   recover:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,6 +42,7 @@ jobs:
         run: python research/recover_opera_rtc_catalog.py
 
       - name: Probe OPERA RTC raster access
+        timeout-minutes: 2
         run: python research/probe_opera_rtc_access.py
 
       - name: Probe ASF GRD and burst access
