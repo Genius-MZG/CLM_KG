@@ -46,7 +46,7 @@ def classify_signature(body: bytes, content_type: str | None) -> tuple[bool, str
         return True, "png"
     if prefix.startswith(b"\x89HDF\r\n\x1a\n"):
         return True, "hdf5"
-    if b"html" in ctype or prefix.lstrip().lower().startswith((b"<!doctype", b"<html")):
+    if "html" in ctype or prefix.lstrip().lower().startswith((b"<!doctype", b"<html")):
         return False, "html_or_login_page"
     return False, "unknown_signature"
 
