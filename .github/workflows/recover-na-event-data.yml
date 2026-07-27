@@ -40,7 +40,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           echo msttcorefonts msttcorefonts/accepted-mscorefonts-eula select true | sudo debconf-set-selections
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends fonts-arphic-ukai ttf-mscorefonts-installer
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends fonts-arphic-gkai00mp fonts-arphic-ukai ttf-mscorefonts-installer
           sudo fc-cache -f -v >/dev/null
           fc-list | grep -Ei 'Times New Roman|AR PL KaitiM GB|AR PL UKai|KaiTi|STKaiti' || true
 
