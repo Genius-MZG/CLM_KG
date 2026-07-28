@@ -14,13 +14,13 @@ env:
   PYTHONUNBUFFERED: "1"
 
 concurrency:
-  group: recover-na-event-data-v11-${{ github.ref }}
+  group: recover-na-event-data-v12-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   recover:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -70,6 +70,14 @@ jobs:
         timeout-minutes: 20
         run: python research/extract_planetary_computer_rtc.py
 
+      - name: Probe real water-label and DEM model inputs
+        timeout-minutes: 5
+        run: python research/probe_model_inputs.py
+
+      - name: Recover JRC and DEM model inputs
+        timeout-minutes: 15
+        run: python research/prepare_model_inputs.py
+
       - name: Prepare validated figure inputs
         run: python research/prepare_figure_inputs.py
 
@@ -79,10 +87,6 @@ jobs:
       - name: Render five-phase RTC and coverage figures
         timeout-minutes: 10
         run: python research/render_rtc_figures.py
-
-      - name: Probe real water-label and DEM model inputs
-        timeout-minutes: 5
-        run: python research/probe_model_inputs.py
 
       - name: Show recovery status
         if: always()
@@ -98,6 +102,8 @@ jobs:
           cat research/recovered_data/planetary_computer_rtc/rtc_extraction_failure.json || true
           cat research/recovered_data/planetary_computer_rtc/rtc_extraction_status.json || true
           cat research/recovered_data/model_inputs/model_input_probe.json || true
+          cat research/recovered_data/model_inputs/model_input_status.json || true
+          cat research/recovered_data/model_inputs/model_input_failure.json || true
           cat research/recovered_data/figure_ready/font_gate.json || true
           cat research/recovered_data/figure_ready/figure_preparation_status.json || true
           cat research/recovered_data/figure_outputs/figure_qa_status.json || true
