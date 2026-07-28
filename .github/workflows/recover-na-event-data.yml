@@ -14,13 +14,13 @@ env:
   PYTHONUNBUFFERED: "1"
 
 concurrency:
-  group: recover-na-event-data-v16-${{ github.ref }}
+  group: recover-na-event-data-v17-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   recover:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 105
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -136,6 +136,10 @@ jobs:
         timeout-minutes: 20
         run: python research/recompute_candidate_water_model.py
 
+      - name: Render candidate model performance and maps
+        timeout-minutes: 10
+        run: python research/render_candidate_model_figures.py
+
       - name: Show recovery status
         if: always()
         run: |
@@ -159,6 +163,7 @@ jobs:
           cat research/recovered_data/figure_ready/figure_preparation_status.json || true
           cat research/recovered_data/figure_outputs/figure_qa_status.json || true
           cat research/recovered_data/figure_outputs/figure03_04_qa_status.json || true
+          cat research/recovered_data/figure_outputs/candidate_model_figure_qa.json || true
 
       - name: Upload recovery artifact
         if: always()
