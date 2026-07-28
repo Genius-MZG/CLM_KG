@@ -28,10 +28,12 @@ def payload_kind(body: bytes, content_type: str | None) -> str:
         return "zip"
     if head.startswith(b"\x89HDF\r\n\x1a\n"):
         return "hdf5"
-    if b"html" in ctype or body[:512].lower().find(b"<html") >= 0:
+    if "html" in ctype or body[:512].lower().find(b"<html") >= 0:
         return "html"
     if "json" in ctype:
         return "json"
+    if "xml" in ctype or body[:64].lstrip().startswith(b"<?xml"):
+        return "xml"
     return "other"
 
 
@@ -129,6 +131,7 @@ def main() -> None:
     searches: dict[str, object] = {}
     targets: list[dict[str, str]] = []
     token_results: dict[str, object] = {}
+    token_cache: dict[str, str] = {}
 
     for collection in COLLECTIONS:
         for date in DATES:
@@ -144,40 +147,49 @@ def main() -> None:
                 item_id = str(feature.get("id"))
                 for asset in candidate_assets(feature):
                     href = asset["href"]
+                    token_url = token_url_for(href)
+                    signed_href = href
+                    access_mode = "raw_href"
+                    if token_url:
+                        if token_url not in token_results:
+                            try:
+                                r = requests.get(token_url, timeout=(8, 20))
+                                entry: dict[str, object] = {
+                                    "status_code": r.status_code,
+                                    "content_type": r.headers.get("content-type"),
+                                    "body_prefix": r.text[:1000],
+                                }
+                                if r.status_code == 200:
+                                    data = r.json()
+                                    token = str(data.get("token") or "")
+                                    entry["has_token"] = bool(token)
+                                    entry["expiry"] = data.get("msft:expiry")
+                                    if token:
+                                        token_cache[token_url] = token
+                                token_results[token_url] = entry
+                            except Exception as exc:
+                                token_results[token_url] = {"error": f"{type(exc).__name__}: {exc}"}
+                        token = token_cache.get(token_url)
+                        if token:
+                            signed_href = href + ("&" if "?" in href else "?") + token
+                            access_mode = "planetary_computer_sas"
                     targets.append({
                         "collection": collection,
                         "date": date,
                         "item_id": item_id,
                         **asset,
-                        "access_mode": "raw_href",
-                        "url": href,
+                        "access_mode": access_mode,
+                        "url": signed_href,
                     })
-                    token_url = token_url_for(href)
-                    if token_url and token_url not in token_results:
-                        try:
-                            r = requests.get(token_url, timeout=(8, 20))
-                            entry: dict[str, object] = {
-                                "status_code": r.status_code,
-                                "content_type": r.headers.get("content-type"),
-                                "body_prefix": r.text[:1000],
-                            }
-                            if r.status_code == 200:
-                                data = r.json()
-                                entry["has_token"] = bool(data.get("token"))
-                                entry["expiry"] = data.get("msft:expiry")
-                            token_results[token_url] = entry
-                        except Exception as exc:
-                            token_results[token_url] = {"error": f"{type(exc).__name__}: {exc}"}
 
-    # Limit duplicate probes while retaining both collections and all dates.
     unique: dict[tuple[str, str, str], dict[str, str]] = {}
     for target in targets:
         key = (target["collection"], target["date"], target["url"])
         unique[key] = target
-    probe_targets = list(unique.values())[:120]
+    probe_targets = list(unique.values())[:160]
 
     records: list[dict[str, object]] = []
-    with ThreadPoolExecutor(max_workers=10) as pool:
+    with ThreadPoolExecutor(max_workers=12) as pool:
         future_map = {pool.submit(probe, target["url"]): target for target in probe_targets}
         for future in as_completed(future_map):
             records.append({**future_map[future], **future.result()})
