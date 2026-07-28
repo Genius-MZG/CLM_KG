@@ -32,15 +32,18 @@ def main() -> None:
         key = str(entry.get("key", ""))
         lower = key.lower()
         if "geoparquet" in lower or "parquet" in lower:
+            links = entry.get("links", {}) or {}
             candidates.append({
                 "key": key,
                 "size": entry.get("size"),
                 "checksum": entry.get("checksum"),
-                "content_url": entry.get("links", {}).get("content"),
+                # Zenodo's current records API exposes the downloadable content endpoint
+                # as links.self for files. Retain links.content as a compatibility fallback.
+                "content_url": links.get("content") or links.get("self"),
             })
 
     preferred = [row for row in candidates if "na" in row["key"].lower() or "north" in row["key"].lower()]
-    inspection_targets = preferred or candidates[:3]
+    inspection_targets = preferred or candidates[:1]
     inspections = []
     for row in inspection_targets:
         url = row.get("content_url")
@@ -48,20 +51,33 @@ def main() -> None:
             inspections.append({**row, "error": "missing content URL"})
             continue
         try:
-            with RemoteZip(url, initial_buffer_size=2 * 1024 * 1024) as archive:
-                members = [info.filename for info in archive.infolist()]
+            with RemoteZip(url, initial_buffer_size=4 * 1024 * 1024) as archive:
+                infos = archive.infolist()
+            members = [info.filename for info in infos]
             reach_members = [name for name in members if "reach" in name.lower() and name.lower().endswith((".parquet", ".geoparquet"))]
             na_members = [name for name in members if ("/na" in name.lower() or name.lower().startswith("na") or "north_america" in name.lower())]
+            member_rows = [
+                {
+                    "filename": info.filename,
+                    "file_size": info.file_size,
+                    "compress_size": info.compress_size,
+                    "crc": info.CRC,
+                }
+                for info in infos
+                if info.filename in set(reach_members + na_members)
+            ]
             inspections.append({
                 **row,
                 "member_count": len(members),
                 "reach_members": reach_members,
                 "north_america_members": na_members[:100],
+                "verified_member_metadata": member_rows[:200],
                 "all_members_sample": members[:100],
             })
         except Exception as exc:
             inspections.append({**row, "error": f"{type(exc).__name__}: {exc}"})
 
+    geometry_recovered = any(bool(item.get("reach_members")) for item in inspections)
     report = {
         "source": "Official SWORD v17c Zenodo record",
         "record_id": ZENODO_RECORD,
@@ -69,6 +85,7 @@ def main() -> None:
         "record_doi": metadata.get("metadata", {}).get("doi"),
         "candidate_geoparquet_archives": candidates,
         "inspections": inspections,
+        "archive_member_inventory_recovered": geometry_recovered,
         "geometry_recovered": False,
         "next_gate": "Extract only the verified North America reaches GeoParquet member, then spatially subset by the fixed AOI and station corridor before Figure 1 rendering.",
         "scientific_rule": "No centerline is drawn until an official SWORD member and its real geometry are extracted and spatially verified.",
