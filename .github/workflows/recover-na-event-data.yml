@@ -14,7 +14,7 @@ env:
   PYTHONUNBUFFERED: "1"
 
 concurrency:
-  group: recover-na-event-data-v14-${{ github.ref }}
+  group: recover-na-event-data-v15-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -46,9 +46,6 @@ jobs:
 
       - name: Recover and audit public data
         run: |
-          # The official GRDC ArcGIS host is occasionally unreachable from a runner.
-          # Bound one connection attempt to 10 s and one read to 30 s so an ancillary
-          # map source cannot consume three minutes or block the independent RTC path.
           python - <<'PY'
           from pathlib import Path
           path = Path("research/recover_na_event_data.py")
@@ -131,6 +128,10 @@ jobs:
         timeout-minutes: 10
         run: python research/render_rtc_figures.py
 
+      - name: Audit candidate JRC labels and spatial blocks
+        timeout-minutes: 5
+        run: python research/build_label_sensitivity_audit.py
+
       - name: Show recovery status
         if: always()
         run: |
@@ -148,6 +149,7 @@ jobs:
           cat research/recovered_data/model_inputs/model_input_status.json || true
           cat research/recovered_data/model_inputs/model_input_failure.json || true
           cat research/recovered_data/model_inputs/qa/model_input_qa.json || true
+          cat research/recovered_data/label_audit/label_audit_status.json || true
           cat research/recovered_data/figure_ready/font_gate.json || true
           cat research/recovered_data/figure_ready/figure_preparation_status.json || true
           cat research/recovered_data/figure_outputs/figure_qa_status.json || true
