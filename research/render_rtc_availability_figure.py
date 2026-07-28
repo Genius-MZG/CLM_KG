@@ -9,7 +9,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import BoundaryNorm, ListedColormap
 import numpy as np
-import pandas as pd
 import rasterio
 
 ROOT = Path(__file__).resolve().parent / "recovered_data"
@@ -42,6 +41,22 @@ def save_formats(fig: plt.Figure) -> list[str]:
     return names
 
 
+def add_scale_and_north(ax: plt.Axes, extent: list[float], western: str) -> None:
+    left, right, bottom, top = extent
+    width = right - left
+    height = top - bottom
+    scale_km = 10.0
+    x0 = left + 0.06 * width
+    y0 = bottom + 0.07 * height
+    ax.plot([x0, x0 + scale_km], [y0, y0], color="black", linewidth=1.4, solid_capstyle="butt")
+    ax.plot([x0, x0], [y0 - 0.008 * height, y0 + 0.008 * height], color="black", linewidth=0.8)
+    ax.plot([x0 + scale_km, x0 + scale_km], [y0 - 0.008 * height, y0 + 0.008 * height], color="black", linewidth=0.8)
+    ax.text(x0 + scale_km / 2, y0 + 0.018 * height, "10 km", ha="center", va="bottom", fontfamily=western, fontsize=7)
+    ax.annotate("N", xy=(right - 0.07 * width, top - 0.07 * height), xytext=(right - 0.07 * width, top - 0.20 * height),
+                ha="center", va="center", fontfamily=western, fontsize=8,
+                arrowprops={"arrowstyle": "-|>", "linewidth": 1.0, "color": "black"})
+
+
 def main() -> None:
     gate = json.loads((READY / "font_gate.json").read_text(encoding="utf-8"))
     western = gate.get("selected_western_family")
@@ -68,8 +83,8 @@ def main() -> None:
     left, bottom, right, top = bounds
     extent = [left / 1000, right / 1000, bottom / 1000, top / 1000]
 
-    fig = plt.figure(figsize=(7.0866, 3.25))
-    grid = fig.add_gridspec(1, 2, width_ratios=[1.45, 1.0], wspace=0.24)
+    fig = plt.figure(figsize=(7.0866, 3.15))
+    grid = fig.add_gridspec(1, 2, width_ratios=[1.55, 1.0], wspace=0.25)
     ax_map = fig.add_subplot(grid[0, 0])
     ax_bar = fig.add_subplot(grid[0, 1])
 
@@ -80,6 +95,11 @@ def main() -> None:
         xs = np.linspace(extent[0], extent[1], common.shape[1])
         ys = np.linspace(extent[3], extent[2], common.shape[0])
         ax_map.contour(xs, ys, common.astype("uint8"), levels=[0.5], colors="black", linewidths=0.7)
+    if np.unique(count).size == 1:
+        ax_map.text(0.5, 0.5, "AOI 内全部像元\n五期均有 VV/VH 数据", transform=ax_map.transAxes,
+                    ha="center", va="center", fontfamily=chinese, fontsize=9,
+                    bbox={"boxstyle": "round,pad=0.35", "facecolor": "white", "edgecolor": "black", "linewidth": 0.6, "alpha": 0.88})
+    add_scale_and_north(ax_map, extent, western)
     ax_map.set_title("五期双极化数据可用次数", fontfamily=chinese, fontsize=9)
     ax_map.set_xlabel("Easting (km)", fontfamily=western, fontsize=8)
     ax_map.set_ylabel("Northing (km)", fontfamily=western, fontsize=8)
@@ -94,7 +114,10 @@ def main() -> None:
 
     x = np.arange(len(PHASES))
     bars = ax_bar.bar(x, fractions * 100, width=0.58, edgecolor="black", linewidth=0.5, color="#8C8C8C")
-    ax_bar.axhline(common.mean() * 100, color="black", linestyle="--", linewidth=0.9, label="Five-phase common")
+    common_pct = common.mean() * 100
+    ax_bar.axhline(common_pct, color="black", linestyle="--", linewidth=0.9)
+    ax_bar.text(0.98, 0.08, f"Five-phase common: {common_pct:.1f}%", transform=ax_bar.transAxes,
+                ha="right", va="bottom", fontfamily=western, fontsize=6.8)
     ax_bar.set_xticks(x)
     ax_bar.set_xticklabels([label for _, label in PHASES], fontfamily=chinese, fontsize=7, rotation=28, ha="right")
     ax_bar.set_ylabel("Non-NoData coverage (%)", fontfamily=western, fontsize=8)
@@ -105,11 +128,10 @@ def main() -> None:
         label.set_fontsize(7)
     for bar, value in zip(bars, fractions):
         ax_bar.text(bar.get_x() + bar.get_width() / 2, min(value * 100 + 0.7, 100.3), f"{value * 100:.1f}", ha="center", va="bottom", fontfamily=western, fontsize=6.5)
-    ax_bar.legend(frameon=False, prop={"family": western, "size": 7}, loc="lower right")
 
     fig.suptitle("RTC 数据可用区空间分布与覆盖统计", fontfamily=chinese, fontsize=10, y=0.99)
     fig.text(0.012, 0.012, "仅表示 VV/VH 非 NoData；不等同于 OPERA 质量掩膜或原 HPC 严格有效区", ha="left", va="bottom", fontfamily=chinese, fontsize=7)
-    fig.subplots_adjust(left=0.075, right=0.985, top=0.84, bottom=0.22)
+    fig.subplots_adjust(left=0.075, right=0.975, top=0.84, bottom=0.23)
     rendered = save_formats(fig)
     plt.close(fig)
 
@@ -117,11 +139,13 @@ def main() -> None:
         "crs": crs,
         "grid_shape": list(count.shape),
         "availability_count_range": [int(count.min()), int(count.max())],
+        "uniform_availability_count": bool(np.unique(count).size == 1),
         "phase_data_availability_fraction": {phase: float(value) for (phase, _), value in zip(PHASES, fractions)},
         "common_data_availability_fraction": float(common.mean()),
         "strict_quality_mask_available": False,
         "scope": "Spatial non-NoData availability only; not an OPERA quality mask or original HPC strict valid-area result",
         "formal_export_allowed": True,
+        "visual_review_fixes": ["uniform-map annotation", "10-km scale bar", "north arrow", "unclipped common-coverage annotation"],
         "rendered_files": rendered,
         "sha256": {name: digest(OUT / name) for name in rendered},
         "qa_passed": crs == "EPSG:32610" and len(rendered) == 4,
