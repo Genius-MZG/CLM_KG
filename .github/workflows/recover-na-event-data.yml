@@ -14,7 +14,7 @@ env:
   PYTHONUNBUFFERED: "1"
 
 concurrency:
-  group: recover-na-event-data-v9-${{ github.ref }}
+  group: recover-na-event-data-v10-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -76,6 +76,10 @@ jobs:
       - name: Build figure specifications and gated exports
         run: python research/render_supported_figures.py
 
+      - name: Render five-phase RTC and coverage figures
+        timeout-minutes: 10
+        run: python research/render_rtc_figures.py
+
       - name: Show recovery status
         if: always()
         run: |
@@ -92,6 +96,7 @@ jobs:
           cat research/recovered_data/figure_ready/font_gate.json || true
           cat research/recovered_data/figure_ready/figure_preparation_status.json || true
           cat research/recovered_data/figure_outputs/figure_qa_status.json || true
+          cat research/recovered_data/figure_outputs/figure03_04_qa_status.json || true
 
       - name: Upload recovery artifact
         if: always()
