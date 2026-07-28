@@ -14,13 +14,13 @@ env:
   PYTHONUNBUFFERED: "1"
 
 concurrency:
-  group: recover-na-event-data-v8-${{ github.ref }}
+  group: recover-na-event-data-v9-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   recover:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -67,7 +67,7 @@ jobs:
         run: python research/probe_planetary_computer_s1.py
 
       - name: Extract five-phase Planetary Computer RTC rasters
-        timeout-minutes: 12
+        timeout-minutes: 20
         run: python research/extract_planetary_computer_rtc.py
 
       - name: Prepare validated figure inputs
@@ -86,6 +86,8 @@ jobs:
           cat research/recovered_data/source_access_probe/asf_source_access_probe.json || true
           cat research/recovered_data/source_access_probe/public_s1_roda_probe.json || true
           cat research/recovered_data/source_access_probe/planetary_computer_s1_probe.json || true
+          cat research/recovered_data/planetary_computer_rtc/rtc_extraction_progress.json || true
+          cat research/recovered_data/planetary_computer_rtc/rtc_extraction_failure.json || true
           cat research/recovered_data/planetary_computer_rtc/rtc_extraction_status.json || true
           cat research/recovered_data/figure_ready/font_gate.json || true
           cat research/recovered_data/figure_ready/figure_preparation_status.json || true
