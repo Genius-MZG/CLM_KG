@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import shutil
+import time
+import traceback
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import requests
 from remotezip import RemoteZip
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 ROOT = Path(__file__).resolve().parent / "recovered_data"
 OUT = ROOT / "river_geometry"
@@ -13,85 +20,181 @@ OUT.mkdir(parents=True, exist_ok=True)
 
 ZENODO_RECORD = "21415370"
 ZENODO_API = f"https://zenodo.org/api/records/{ZENODO_RECORD}"
+ZENODO_FILE_ENDPOINT = f"https://zenodo.org/api/records/{ZENODO_RECORD}/files"
 USER_AGENT = "NorthAmericaFloodplainResearch/1.0"
+MAX_EXTRACT_BYTES = 800 * 1024 * 1024
 
 
 def write_json(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
 
 
-def main() -> None:
-    response = requests.get(ZENODO_API, timeout=(10, 60), headers={"User-Agent": USER_AGENT})
-    response.raise_for_status()
-    metadata = response.json()
-    write_json(OUT / "sword_v17c_zenodo_metadata.json", metadata)
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
-    files = metadata.get("files", [])
-    candidates = []
-    for entry in files:
-        key = str(entry.get("key", ""))
-        lower = key.lower()
-        if "geoparquet" in lower or "parquet" in lower:
-            links = entry.get("links", {}) or {}
-            candidates.append({
-                "key": key,
-                "size": entry.get("size"),
-                "checksum": entry.get("checksum"),
-                # Zenodo's current records API exposes the downloadable content endpoint
-                # as links.self for files. Retain links.content as a compatibility fallback.
-                "content_url": links.get("content") or links.get("self"),
-            })
 
-    preferred = [row for row in candidates if "na" in row["key"].lower() or "north" in row["key"].lower()]
-    inspection_targets = preferred or candidates[:1]
-    inspections = []
-    for row in inspection_targets:
-        url = row.get("content_url")
-        if not url:
-            inspections.append({**row, "error": "missing content URL"})
-            continue
-        try:
-            with RemoteZip(url, initial_buffer_size=4 * 1024 * 1024) as archive:
-                infos = archive.infolist()
+def resilient_session() -> requests.Session:
+    retry = Retry(
+        total=4,
+        connect=4,
+        read=4,
+        status=4,
+        backoff_factor=1.5,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET", "HEAD"}),
+        raise_on_status=False,
+    )
+    session = requests.Session()
+    session.headers.update({"User-Agent": USER_AGENT})
+    session.mount("https://", HTTPAdapter(max_retries=retry, pool_connections=4, pool_maxsize=4))
+    return session
+
+
+def canonical_content_url(key: str, links: dict[str, Any]) -> str:
+    linked = str(links.get("content") or links.get("self") or "")
+    if linked.rstrip("/").endswith("/content"):
+        return linked
+    return f"{ZENODO_FILE_ENDPOINT}/{quote(key, safe='')}/content"
+
+
+def inventory_and_extract(row: dict[str, Any]) -> dict[str, Any]:
+    url = str(row["content_url"])
+    inspection: dict[str, Any] = {**row}
+    try:
+        with RemoteZip(url, initial_buffer_size=8 * 1024 * 1024) as archive:
+            infos = archive.infolist()
             members = [info.filename for info in infos]
-            reach_members = [name for name in members if "reach" in name.lower() and name.lower().endswith((".parquet", ".geoparquet"))]
-            na_members = [name for name in members if ("/na" in name.lower() or name.lower().startswith("na") or "north_america" in name.lower())]
-            member_rows = [
+            reach_infos = [
+                info
+                for info in infos
+                if "reach" in info.filename.lower()
+                and info.filename.lower().endswith((".parquet", ".geoparquet"))
+            ]
+            na_reach_infos = [
+                info
+                for info in reach_infos
+                if Path(info.filename).name.lower().startswith("na_")
+                or "north_america" in info.filename.lower()
+                or "/na_" in info.filename.lower()
+            ]
+            na_infos = [
+                info
+                for info in infos
+                if Path(info.filename).name.lower().startswith("na_")
+                or "north_america" in info.filename.lower()
+                or "/na_" in info.filename.lower()
+            ]
+            selected = sorted(na_reach_infos, key=lambda info: info.file_size)[0] if na_reach_infos else None
+            verified = [
                 {
                     "filename": info.filename,
                     "file_size": info.file_size,
                     "compress_size": info.compress_size,
                     "crc": info.CRC,
                 }
-                for info in infos
-                if info.filename in set(reach_members + na_members)
+                for info in sorted(set(reach_infos + na_infos), key=lambda info: info.filename)
             ]
-            inspections.append({
-                **row,
-                "member_count": len(members),
-                "reach_members": reach_members,
-                "north_america_members": na_members[:100],
-                "verified_member_metadata": member_rows[:200],
-                "all_members_sample": members[:100],
-            })
-        except Exception as exc:
-            inspections.append({**row, "error": f"{type(exc).__name__}: {exc}"})
+            inspection.update(
+                {
+                    "member_count": len(members),
+                    "reach_members": [info.filename for info in reach_infos],
+                    "north_america_members": [info.filename for info in na_infos[:200]],
+                    "verified_member_metadata": verified[:400],
+                    "all_members_sample": members[:100],
+                    "selected_north_america_reaches_member": selected.filename if selected else None,
+                }
+            )
+            if selected is not None and selected.file_size <= MAX_EXTRACT_BYTES:
+                destination = OUT / Path(selected.filename).name
+                temporary = destination.with_suffix(destination.suffix + ".part")
+                if temporary.exists():
+                    temporary.unlink()
+                with archive.open(selected.filename) as source, temporary.open("wb") as target:
+                    shutil.copyfileobj(source, target, length=8 * 1024 * 1024)
+                temporary.replace(destination)
+                inspection["extracted_member"] = {
+                    "archive_member": selected.filename,
+                    "output": str(destination.relative_to(ROOT)),
+                    "bytes": destination.stat().st_size,
+                    "sha256": sha256(destination),
+                }
+            elif selected is not None:
+                inspection["extraction_skipped"] = {
+                    "reason": "verified member exceeds bounded extraction size",
+                    "file_size": selected.file_size,
+                    "max_extract_bytes": MAX_EXTRACT_BYTES,
+                }
+    except Exception as exc:
+        inspection["error"] = f"{type(exc).__name__}: {exc}"
+        inspection["traceback"] = traceback.format_exc()
+    return inspection
 
-    geometry_recovered = any(bool(item.get("reach_members")) for item in inspections)
-    report = {
+
+def main() -> None:
+    started = time.time()
+    report: dict[str, Any] = {
         "source": "Official SWORD v17c Zenodo record",
         "record_id": ZENODO_RECORD,
-        "record_version": metadata.get("metadata", {}).get("version"),
-        "record_doi": metadata.get("metadata", {}).get("doi"),
-        "candidate_geoparquet_archives": candidates,
-        "inspections": inspections,
-        "archive_member_inventory_recovered": geometry_recovered,
+        "archive_member_inventory_recovered": False,
+        "geometry_member_extracted": False,
         "geometry_recovered": False,
-        "next_gate": "Extract only the verified North America reaches GeoParquet member, then spatially subset by the fixed AOI and station corridor before Figure 1 rendering.",
         "scientific_rule": "No centerline is drawn until an official SWORD member and its real geometry are extracted and spatially verified.",
     }
-    write_json(OUT / "sword_geometry_probe.json", report)
-    print(json.dumps(report, ensure_ascii=False, indent=2))
+    try:
+        session = resilient_session()
+        response = session.get(ZENODO_API, timeout=(10, 60))
+        response.raise_for_status()
+        metadata = response.json()
+        write_json(OUT / "sword_v17c_zenodo_metadata.json", metadata)
+
+        files = metadata.get("files", [])
+        candidates: list[dict[str, Any]] = []
+        for entry in files:
+            key = str(entry.get("key", ""))
+            lower = key.lower()
+            if "geoparquet" in lower or "parquet" in lower:
+                links = entry.get("links", {}) or {}
+                candidates.append(
+                    {
+                        "key": key,
+                        "size": entry.get("size"),
+                        "checksum": entry.get("checksum"),
+                        "content_url": canonical_content_url(key, links),
+                        "api_links": links,
+                    }
+                )
+
+        preferred = [row for row in candidates if row["key"].lower() == "sword_v17c_parquet.zip"]
+        inspection_targets = preferred or candidates[:1]
+        inspections = [inventory_and_extract(row) for row in inspection_targets]
+
+        inventory_ok = any(bool(item.get("reach_members")) for item in inspections)
+        extracted_ok = any(bool(item.get("extracted_member")) for item in inspections)
+        report.update(
+            {
+                "record_version": metadata.get("metadata", {}).get("version"),
+                "record_doi": metadata.get("metadata", {}).get("doi"),
+                "candidate_geoparquet_archives": candidates,
+                "inspections": inspections,
+                "archive_member_inventory_recovered": inventory_ok,
+                "geometry_member_extracted": extracted_ok,
+                "geometry_recovered": False,
+                "next_gate": "Read the extracted official North America reaches GeoParquet, spatially subset by the fixed AOI and station corridor, verify topology and coordinates, then render Figure 1.",
+            }
+        )
+    except Exception as exc:
+        report["fatal_probe_error"] = f"{type(exc).__name__}: {exc}"
+        report["traceback"] = traceback.format_exc()
+        report["next_gate"] = "Retry the official Zenodo metadata and bounded archive-member probe; the independent RTC/model pipeline must continue meanwhile."
+    finally:
+        report["elapsed_seconds"] = round(time.time() - started, 3)
+        write_json(OUT / "sword_geometry_probe.json", report)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
