@@ -14,13 +14,13 @@ env:
   PYTHONUNBUFFERED: "1"
 
 concurrency:
-  group: recover-na-event-data-v7-${{ github.ref }}
+  group: recover-na-event-data-v8-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   recover:
     runs-on: ubuntu-latest
-    timeout-minutes: 32
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas requests remotezip matplotlib
+          pip install pandas requests remotezip matplotlib numpy rasterio
 
       - name: Install required publication fonts
         continue-on-error: true
@@ -66,6 +66,10 @@ jobs:
         timeout-minutes: 5
         run: python research/probe_planetary_computer_s1.py
 
+      - name: Extract five-phase Planetary Computer RTC rasters
+        timeout-minutes: 12
+        run: python research/extract_planetary_computer_rtc.py
+
       - name: Prepare validated figure inputs
         run: python research/prepare_figure_inputs.py
 
@@ -75,13 +79,14 @@ jobs:
       - name: Show recovery status
         if: always()
         run: |
-          find research/recovered_data -maxdepth 5 -type f -printf '%p %s bytes\n' | sort || true
+          find research/recovered_data -maxdepth 6 -type f -printf '%p %s bytes\n' | sort || true
           cat research/recovered_data/recovery_status.json || true
           cat research/recovered_data/opera_rtc_catalog/opera_rtc_catalog_status.json || true
           cat research/recovered_data/opera_rtc_catalog/access_probe/opera_rtc_access_probe.json || true
           cat research/recovered_data/source_access_probe/asf_source_access_probe.json || true
           cat research/recovered_data/source_access_probe/public_s1_roda_probe.json || true
           cat research/recovered_data/source_access_probe/planetary_computer_s1_probe.json || true
+          cat research/recovered_data/planetary_computer_rtc/rtc_extraction_status.json || true
           cat research/recovered_data/figure_ready/font_gate.json || true
           cat research/recovered_data/figure_ready/figure_preparation_status.json || true
           cat research/recovered_data/figure_outputs/figure_qa_status.json || true
