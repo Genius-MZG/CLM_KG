@@ -1,0 +1,3 @@
+FID,grdc_no,river,station,area,altitude,lat_org,long_org,lat_pp,long_pp,dist_km,area_calc,quality,type,comment,source
+5519,4146080,SKAGIT RIVER,"NEAR MOUNT VERNON, WA",8010.9,-999.0,48.4448,-122.3354,48.445,-122.335,0,8043.0,High,Automatic,Area difference <= 5% and distance <= 5 km,merit
+5520,4146081,SKAGIT RIVER,"NEAR CONCRETE, WA",7088.8,39.62,48.5243,-121.771,48.52417,-121.77083,0,7113.3,High,Automatic,Area difference <= 5% and distance <= 5 km,merit
