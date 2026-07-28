@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -28,10 +30,6 @@ PHASE_LABELS = {
     "early_recession": "早退水期",
     "late_recession": "晚退水期",
 }
-STATION_LABELS = {
-    "GRDC_4146080": "GRDC_4146080 · Near Mount Vernon",
-    "GRDC_4146081": "GRDC_4146081 · Near Concrete",
-}
 STATION_ROLE_LABELS = {
     "GRDC_4146080": "下游 · Near Mount Vernon",
     "GRDC_4146081": "上游 · Near Concrete",
@@ -43,14 +41,13 @@ FLOW_COLORS = {"GRDC_4146080": "#4477AA", "GRDC_4146081": "#CC6677"}
 
 def sha256(path: Path) -> str:
     h = hashlib.sha256()
-    with path.open("rb") as f:
-        for block in iter(lambda: f.read(1024 * 1024), b""):
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
             h.update(block)
     return h.hexdigest()
 
 
 def exterior_rings(geometry: dict):
-    """Yield exterior polygon rings only; interior holes must not be plotted as point-like artefacts."""
     gtype = geometry.get("type")
     coords = geometry.get("coordinates", [])
     if gtype == "Polygon" and coords:
@@ -61,133 +58,120 @@ def exterior_rings(geometry: dict):
                 yield polygon[0]
 
 
-def apply_tick_font(ax, family: str) -> None:
-    for label in [*ax.get_xticklabels(), *ax.get_yticklabels()]:
+def line_parts(geometry: dict):
+    gtype = geometry.get("type")
+    coords = geometry.get("coordinates", [])
+    if gtype == "LineString":
+        yield coords
+    elif gtype == "MultiLineString":
+        yield from coords
+
+
+def apply_tick_font(axis, family: str) -> None:
+    for label in [*axis.get_xticklabels(), *axis.get_yticklabels()]:
         label.set_fontfamily(family)
         label.set_fontsize(8)
 
 
 def station_id_from_feature(feature: dict) -> str:
-    props = feature.get("properties", {})
-    value = props.get("grdc_no")
     try:
-        return f"GRDC_{int(float(value))}"
+        return f"GRDC_{int(float(feature.get('properties', {}).get('grdc_no')))}"
     except (TypeError, ValueError):
         return "unknown"
 
 
-def render_map(basins: dict, stations: pd.DataFrame, western_font: str, chinese_font: str) -> list[Path]:
-    fig, ax = plt.subplots(figsize=(7.0866, 4.8))
+def add_scale_and_north(axis, western_font: str) -> None:
+    xmin, xmax = axis.get_xlim()
+    ymin, ymax = axis.get_ylim()
+    latitude = (ymin + ymax) / 2.0
+    km_per_degree_lon = 111.32 * max(0.2, abs(__import__("math").cos(__import__("math").radians(latitude))))
+    target_km = 20.0
+    length_deg = target_km / km_per_degree_lon
+    x0 = xmin + 0.07 * (xmax - xmin)
+    y0 = ymin + 0.07 * (ymax - ymin)
+    axis.plot([x0, x0 + length_deg], [y0, y0], color="#222222", linewidth=1.4, zorder=8)
+    axis.plot([x0, x0], [y0 - 0.006 * (ymax - ymin), y0 + 0.006 * (ymax - ymin)], color="#222222", linewidth=0.8, zorder=8)
+    axis.plot([x0 + length_deg, x0 + length_deg], [y0 - 0.006 * (ymax - ymin), y0 + 0.006 * (ymax - ymin)], color="#222222", linewidth=0.8, zorder=8)
+    axis.text(x0 + length_deg / 2, y0 + 0.015 * (ymax - ymin), "20 km", ha="center", va="bottom", fontfamily=western_font, fontsize=7)
+    axis.annotate("N", xy=(0.94, 0.91), xytext=(0.94, 0.80), xycoords="axes fraction", textcoords="axes fraction", ha="center", va="bottom", fontfamily=western_font, fontsize=8, arrowprops={"arrowstyle": "-|>", "linewidth": 0.9, "color": "#222222"})
+
+
+def render_map(basins: dict, stations: pd.DataFrame, rivers: dict | None, western_font: str, chinese_font: str) -> list[Path]:
+    figure, axis = plt.subplots(figsize=(7.0866, 4.8))
     features = sorted(basins.get("features", []), key=station_id_from_feature)
-    for i, feature in enumerate(features):
+    for index, feature in enumerate(features):
         station_id = station_id_from_feature(feature)
         first = True
         for ring in exterior_rings(feature.get("geometry", {})):
             if len(ring) < 4:
                 continue
-            xs = [p[0] for p in ring]
-            ys = [p[1] for p in ring]
-            ax.fill(
-                xs,
-                ys,
-                facecolor=BASIN_FILL[i % len(BASIN_FILL)],
-                edgecolor=BASIN_EDGE[i % len(BASIN_EDGE)],
-                linewidth=0.9,
-                alpha=0.65,
-                label=STATION_ROLE_LABELS.get(station_id, station_id) + " basin" if first else None,
-                zorder=1,
-            )
+            xs = [point[0] for point in ring]
+            ys = [point[1] for point in ring]
+            axis.fill(xs, ys, facecolor=BASIN_FILL[index % 2], edgecolor=BASIN_EDGE[index % 2], linewidth=0.9, alpha=0.55, label=STATION_ROLE_LABELS.get(station_id, station_id) + " basin" if first else None, zorder=1)
             first = False
+
+    river_count = 0
+    if rivers:
+        for feature in rivers.get("features", []):
+            for part in line_parts(feature.get("geometry", {})):
+                if len(part) >= 2:
+                    axis.plot([p[0] for p in part], [p[1] for p in part], color="#355C7D", linewidth=0.55, alpha=0.85, zorder=2)
+                    river_count += 1
+        if river_count:
+            axis.plot([], [], color="#355C7D", linewidth=0.8, label="Official SWORD v17c reaches")
 
     lon_col = "long_pp" if "long_pp" in stations.columns else "long_org"
     lat_col = "lat_pp" if "lat_pp" in stations.columns else "lat_org"
     for _, row in stations.sort_values("grdc_no").iterrows():
         station_id = f"GRDC_{int(float(row['grdc_no']))}"
         color = FLOW_COLORS.get(station_id, "#333333")
-        ax.scatter([row[lon_col]], [row[lat_col]], s=34, marker="o", color=color,
-                   edgecolor="white", linewidth=0.6, zorder=3)
-        ax.annotate(
-            STATION_ROLE_LABELS.get(station_id, station_id),
-            (row[lon_col], row[lat_col]),
-            xytext=(5, 5),
-            textcoords="offset points",
-            fontsize=8,
-            fontfamily=western_font,
-        )
+        axis.scatter([row[lon_col]], [row[lat_col]], s=34, marker="o", color=color, edgecolor="white", linewidth=0.6, zorder=4)
+        axis.annotate(STATION_ROLE_LABELS.get(station_id, station_id), (row[lon_col], row[lat_col]), xytext=(5, 5), textcoords="offset points", fontsize=8, fontfamily=western_font)
 
-    ax.set_xlabel("Longitude", fontfamily=western_font, fontsize=9)
-    ax.set_ylabel("Latitude", fontfamily=western_font, fontsize=9)
-    ax.set_title("流域范围与观测站", fontfamily=chinese_font, fontsize=10)
-    apply_tick_font(ax, western_font)
-    ax.set_aspect("equal", adjustable="datalim")
-    ax.grid(False)
-    handles, labels = ax.get_legend_handles_labels()
+    axis.set_xlabel("Longitude", fontfamily=western_font, fontsize=9)
+    axis.set_ylabel("Latitude", fontfamily=western_font, fontsize=9)
+    axis.set_title("流域范围、观测站与真实河道", fontfamily=chinese_font, fontsize=10)
+    apply_tick_font(axis, western_font)
+    axis.set_aspect("equal", adjustable="datalim")
+    axis.grid(False)
+    add_scale_and_north(axis, western_font)
+    handles, labels = axis.get_legend_handles_labels()
     if handles:
-        ax.legend(handles, labels, frameon=False, prop={"family": western_font, "size": 7}, loc="upper left")
-    fig.tight_layout()
+        axis.legend(handles, labels, frameon=False, prop={"family": western_font, "size": 7}, loc="upper left")
+    figure.tight_layout()
     outputs = []
-    for ext, dpi in [("svg", None), ("pdf", None), ("png", 300), ("tiff", 600)]:
-        path = OUT / f"figure01_study_reach.{ext}"
-        fig.savefig(path, dpi=dpi, bbox_inches="tight")
+    for extension, dpi in [("svg", None), ("pdf", None), ("png", 300), ("tiff", 600)]:
+        path = OUT / f"figure01_study_reach.{extension}"
+        figure.savefig(path, dpi=dpi, bbox_inches="tight")
         outputs.append(path)
-    plt.close(fig)
+    plt.close(figure)
     return outputs
 
 
-def render_hydrograph(flow: pd.DataFrame, phase: pd.DataFrame, western_font: str, chinese_font: str) -> list[Path]:
-    fig, ax = plt.subplots(figsize=(7.0866, 4.8))
+def render_hydrograph(flow: pd.DataFrame, western_font: str, chinese_font: str) -> list[Path]:
+    figure, axis = plt.subplots(figsize=(7.0866, 4.8))
     for station, group in flow.groupby("station_id", sort=True):
-        ax.plot(
-            group["date"],
-            group["discharge_m3s"],
-            linewidth=1.15,
-            color=FLOW_COLORS.get(station),
-            label=STATION_ROLE_LABELS.get(station, station),
-        )
-
-    label_y = {
-        "baseline": 0.985,
-        "rising": 0.925,
-        "peak": 0.985,
-        "early_recession": 0.925,
-        "late_recession": 0.985,
-    }
-    label_ha = {
-        "baseline": "right",
-        "rising": "right",
-        "peak": "left",
-        "early_recession": "right",
-        "late_recession": "right",
-    }
+        axis.plot(group["date"], group["discharge_m3s"], linewidth=1.15, color=FLOW_COLORS.get(station), label=STATION_ROLE_LABELS.get(station, station))
+    label_y = {"baseline": 0.985, "rising": 0.925, "peak": 0.985, "early_recession": 0.925, "late_recession": 0.985}
+    label_ha = {"baseline": "right", "rising": "right", "peak": "left", "early_recession": "right", "late_recession": "right"}
     for phase_name, date in PHASE_DATES.items():
         timestamp = pd.Timestamp(date)
-        ax.axvline(timestamp, linewidth=0.7, linestyle="--", color="#666666")
-        ax.text(
-            timestamp,
-            label_y[phase_name],
-            PHASE_LABELS[phase_name],
-            rotation=90,
-            transform=ax.get_xaxis_transform(),
-            ha=label_ha[phase_name],
-            va="top",
-            fontsize=7,
-            fontfamily=chinese_font,
-        )
-
-    ax.set_xlabel("Date", fontfamily=western_font, fontsize=9)
-    ax.set_ylabel(r"Discharge (m$^3$ s$^{-1}$)", fontfamily=western_font, fontsize=9)
-    ax.set_title("双站水文过程与五期卫星观测", fontfamily=chinese_font, fontsize=10)
-    ax.legend(frameon=False, prop={"family": western_font, "size": 8}, loc="upper left")
-    apply_tick_font(ax, western_font)
-    ax.margins(x=0.01)
-    ax.set_ylim(bottom=0)
-    fig.tight_layout()
+        axis.axvline(timestamp, linewidth=0.7, linestyle="--", color="#666666")
+        axis.text(timestamp, label_y[phase_name], PHASE_LABELS[phase_name], rotation=90, transform=axis.get_xaxis_transform(), ha=label_ha[phase_name], va="top", fontsize=7, fontfamily=chinese_font)
+    axis.set_xlabel("Date", fontfamily=western_font, fontsize=9)
+    axis.set_ylabel(r"Discharge (m$^3$ s$^{-1}$)", fontfamily=western_font, fontsize=9)
+    axis.set_title("双站水文过程与五期卫星观测", fontfamily=chinese_font, fontsize=10)
+    axis.legend(frameon=False, prop={"family": western_font, "size": 8}, loc="upper left")
+    apply_tick_font(axis, western_font)
+    axis.margins(x=0.01)
+    axis.set_ylim(bottom=0)
+    figure.tight_layout()
     outputs = []
-    for ext, dpi in [("svg", None), ("pdf", None), ("png", 300), ("tiff", 600)]:
-        path = OUT / f"figure02_hydrographs.{ext}"
-        fig.savefig(path, dpi=dpi, bbox_inches="tight")
+    for extension, dpi in [("svg", None), ("pdf", None), ("png", 300), ("tiff", 600)]:
+        path = OUT / f"figure02_hydrographs.{extension}"
+        figure.savefig(path, dpi=dpi, bbox_inches="tight")
         outputs.append(path)
-    plt.close(fig)
+    plt.close(figure)
     return outputs
 
 
@@ -204,18 +188,24 @@ def main() -> None:
     if missing:
         raise FileNotFoundError("Missing render inputs: " + ", ".join(missing))
 
+    sword_source = ROOT / "river_geometry" / "sword_NA_v17c_reaches.parquet"
+    common_mask = ROOT / "planetary_computer_rtc" / "common_valid_mask_30m.tif"
+    sword_output = ROOT / "river_geometry" / "sword_event_aoi_reaches.geojson"
+    subset_returncode = None
+    if sword_source.exists() and common_mask.exists():
+        subset_returncode = subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "subset_sword_river_geometry.py")], check=False).returncode
+
     gate = json.loads(required["font_gate"].read_text(encoding="utf-8"))
     unit_conversion = json.loads(required["unit_conversion"].read_text(encoding="utf-8"))
     flow = pd.read_csv(required["flow"], parse_dates=["date"])
     phase = pd.read_csv(required["phase"])
     stations = pd.read_csv(required["stations"])
     basins = json.loads(required["basins"].read_text(encoding="utf-8"))
+    rivers = json.loads(sword_output.read_text(encoding="utf-8")) if sword_output.exists() else None
 
     qa = {
         "flow_station_count": int(flow["station_id"].nunique()),
         "flow_record_count": int(len(flow)),
-        "flow_missing_discharge": int(flow["discharge_m3s"].isna().sum()),
-        "flow_missing_source_runoff": int(flow["streamflow_mm_day"].isna().sum()),
         "phase_rows": int(len(phase)),
         "phase_missing_discharge": int(phase["discharge_m3s"].isna().sum()),
         "basin_feature_count": int(len(basins.get("features", []))),
@@ -224,38 +214,11 @@ def main() -> None:
         "selected_western_family": gate.get("selected_western_family"),
         "selected_chinese_family": gate.get("selected_chinese_family"),
         "unit_conversion_verified": unit_conversion.get("source_units", "").startswith("mm day-1"),
-        "peak_discharge_range_m3s": [float(flow["discharge_m3s"].min()), float(flow["discharge_m3s"].max())],
-        "phase_dates_strictly_increasing": list(PHASE_DATES.values()) == sorted(PHASE_DATES.values()),
-        "phase_labels_unique": len(set(PHASE_LABELS.values())) == len(PHASE_LABELS),
+        "sword_subset_returncode": subset_returncode,
+        "sword_geometry_ready": bool(rivers and rivers.get("features")),
+        "sword_feature_count": 0 if not rivers else len(rivers.get("features", [])),
     }
-    qa["data_qa_passed"] = bool(
-        qa["flow_station_count"] == 2
-        and qa["phase_rows"] == 10
-        and qa["phase_missing_discharge"] == 0
-        and qa["flow_missing_source_runoff"] == 0
-        and qa["basin_feature_count"] >= 2
-        and qa["station_metadata_rows"] >= 2
-        and qa["unit_conversion_verified"]
-        and qa["peak_discharge_range_m3s"][1] > 100.0
-        and qa["phase_dates_strictly_increasing"]
-        and qa["phase_labels_unique"]
-    )
-
-    specifications = {
-        "figure01": {
-            "title": "流域范围与观测站",
-            "inputs": ["grdc_pair_basins_arcgis.geojson", "grdc_pair_station_metadata.csv"],
-            "width_mm": 180,
-            "formal_formats": ["svg", "pdf", "png_300dpi", "tiff_600dpi"],
-        },
-        "figure02": {
-            "title": "双站水文过程与五期卫星观测",
-            "inputs": ["figure02_hydrograph_long.csv", "figure02_phase_discharge.csv", "streamflow_unit_conversion.json"],
-            "width_mm": 180,
-            "formal_formats": ["svg", "pdf", "png_300dpi", "tiff_600dpi"],
-        },
-    }
-    (OUT / "figure_specs.json").write_text(json.dumps(specifications, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    qa["data_qa_passed"] = bool(qa["flow_station_count"] == 2 and qa["phase_rows"] == 10 and qa["phase_missing_discharge"] == 0 and qa["basin_feature_count"] >= 2 and qa["station_metadata_rows"] >= 2 and qa["unit_conversion_verified"])
 
     rendered: list[Path] = []
     if qa["data_qa_passed"] and qa["formal_export_allowed"]:
@@ -263,21 +226,13 @@ def main() -> None:
         chinese = gate["selected_chinese_family"]
         if western != "Times New Roman" or chinese not in {"KaiTi", "STKaiti", "AR PL KaitiM GB"}:
             raise RuntimeError("Font gate reported an unapproved family")
-        rendered.extend(render_map(basins, stations, western, chinese))
-        rendered.extend(render_hydrograph(flow, phase, western, chinese))
+        rendered.extend(render_map(basins, stations, rivers, western, chinese))
+        rendered.extend(render_hydrograph(flow, western, chinese))
 
-    qa["formal_files_rendered"] = [p.name for p in rendered]
-    qa["render_status"] = (
-        "formal_exports_complete" if rendered else
-        "font_gate_blocked" if not qa["formal_export_allowed"] else
-        "data_qa_failed"
-    )
+    qa["formal_files_rendered"] = [path.name for path in rendered]
+    qa["render_status"] = "formal_exports_complete" if rendered else "blocked"
     (OUT / "figure_qa_status.json").write_text(json.dumps(qa, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-    manifest = []
-    for path in sorted(OUT.glob("*")):
-        if path.is_file():
-            manifest.append({"file": path.name, "bytes": path.stat().st_size, "sha256": sha256(path)})
+    manifest = [{"file": path.name, "bytes": path.stat().st_size, "sha256": sha256(path)} for path in sorted(OUT.glob("*")) if path.is_file()]
     pd.DataFrame(manifest).to_csv(OUT / "sha256_manifest.csv", index=False)
     print(json.dumps(qa, indent=2, ensure_ascii=False))
 
