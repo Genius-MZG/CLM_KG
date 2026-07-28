@@ -14,7 +14,7 @@ env:
   PYTHONUNBUFFERED: "1"
 
 concurrency:
-  group: recover-na-event-data-v19-${{ github.ref }}
+  group: recover-na-event-data-v20-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -149,6 +149,14 @@ jobs:
                   'ax_brier.set_ylabel("Brier", fontfamily=western, fontsize=8, labelpad=4)',
               ),
               (
+                  '    figure07 = plt.figure(figsize=(WIDTH_IN, 2.65))',
+                  '    figure07 = plt.figure(figsize=(WIDTH_IN, 1.95))',
+              ),
+              (
+                  '        bottom=0.06,\n        top=0.76,',
+                  '        bottom=0.055,\n        top=0.69,',
+              ),
+              (
                   '    image = None\n    for axis, (phase, label, date_text) in zip(axes07, PHASES):',
                   '    probability_boundaries = np.asarray([0.0, 0.20, 0.35, 0.50, 0.65, 1.000001])\n    probability_cmap = ListedColormap(["#f4f4f4", "#d9e6f2", "#9ebcda", "#4f81a8", "#1f4e79"])\n    probability_norm = BoundaryNorm(probability_boundaries, probability_cmap.N, clip=True)\n    image = None\n    for axis, (phase, label, date_text) in zip(axes07, PHASES):',
               ),
@@ -157,12 +165,24 @@ jobs:
                   '            cmap=probability_cmap,\n            norm=probability_norm,',
               ),
               (
+                  '            axis.contour(connected_maps[phase].astype("uint8"), levels=[0.5], colors="#ffffff", linewidths=0.45)',
+                  '            axis.contour(connected_maps[phase].astype("uint8"), levels=[0.5], colors="#a33b4b", linewidths=0.60)',
+              ),
+              (
                   '    colorbar = figure07.colorbar(image, cax=colorbar_axis)\n',
                   '    colorbar = figure07.colorbar(image, cax=colorbar_axis, boundaries=probability_boundaries, ticks=[0.0, 0.20, 0.35, 0.50, 0.65, 1.0], spacing="proportional")\n',
               ),
               (
                   '    colorbar.set_label("Candidate water probability", fontfamily=western, fontsize=8)\n',
                   '    colorbar.set_label("Candidate water probability class", fontfamily=western, fontsize=8)\n',
+              ),
+              (
+                  '        "白线：候选连通水体边界；黑线：GRDC 下游流域范围",',
+                  '        "暗红线：候选连通水体边界；黑线：GRDC 下游流域范围",',
+              ),
+              (
+                  '        0.855,',
+                  '        0.805,',
               ),
           ]
           for old, new in replacements:
