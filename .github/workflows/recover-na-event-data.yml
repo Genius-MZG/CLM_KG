@@ -14,13 +14,13 @@ env:
   PYTHONUNBUFFERED: "1"
 
 concurrency:
-  group: recover-na-event-data-v6-${{ github.ref }}
+  group: recover-na-event-data-v7-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   recover:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 32
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -62,6 +62,10 @@ jobs:
         timeout-minutes: 5
         run: python research/probe_public_s1_roda.py
 
+      - name: Probe Planetary Computer Sentinel-1 fallback
+        timeout-minutes: 5
+        run: python research/probe_planetary_computer_s1.py
+
       - name: Prepare validated figure inputs
         run: python research/prepare_figure_inputs.py
 
@@ -77,6 +81,7 @@ jobs:
           cat research/recovered_data/opera_rtc_catalog/access_probe/opera_rtc_access_probe.json || true
           cat research/recovered_data/source_access_probe/asf_source_access_probe.json || true
           cat research/recovered_data/source_access_probe/public_s1_roda_probe.json || true
+          cat research/recovered_data/source_access_probe/planetary_computer_s1_probe.json || true
           cat research/recovered_data/figure_ready/font_gate.json || true
           cat research/recovered_data/figure_ready/figure_preparation_status.json || true
           cat research/recovered_data/figure_outputs/figure_qa_status.json || true
