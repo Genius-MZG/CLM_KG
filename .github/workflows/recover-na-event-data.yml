@@ -14,7 +14,7 @@ env:
   PYTHONUNBUFFERED: "1"
 
 concurrency:
-  group: recover-na-event-data-v10-${{ github.ref }}
+  group: recover-na-event-data-v11-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -80,6 +80,10 @@ jobs:
         timeout-minutes: 10
         run: python research/render_rtc_figures.py
 
+      - name: Probe real water-label and DEM model inputs
+        timeout-minutes: 5
+        run: python research/probe_model_inputs.py
+
       - name: Show recovery status
         if: always()
         run: |
@@ -93,6 +97,7 @@ jobs:
           cat research/recovered_data/planetary_computer_rtc/rtc_extraction_progress.json || true
           cat research/recovered_data/planetary_computer_rtc/rtc_extraction_failure.json || true
           cat research/recovered_data/planetary_computer_rtc/rtc_extraction_status.json || true
+          cat research/recovered_data/model_inputs/model_input_probe.json || true
           cat research/recovered_data/figure_ready/font_gate.json || true
           cat research/recovered_data/figure_ready/figure_preparation_status.json || true
           cat research/recovered_data/figure_outputs/figure_qa_status.json || true
