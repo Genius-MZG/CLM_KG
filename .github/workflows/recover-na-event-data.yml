@@ -14,7 +14,7 @@ env:
   PYTHONUNBUFFERED: "1"
 
 concurrency:
-  group: recover-na-event-data-v21-${{ github.ref }}
+  group: recover-na-event-data-v22-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -57,6 +57,10 @@ jobs:
           path.write_text(text.replace(old, new, 1), encoding="utf-8")
           PY
           python research/recover_na_event_data.py
+
+      - name: Probe official SWORD river geometry package
+        timeout-minutes: 5
+        run: python research/probe_sword_river_geometry.py
 
       - name: Recover OPERA RTC catalogue
         run: python research/recover_opera_rtc_catalog.py
@@ -189,6 +193,7 @@ jobs:
         run: |
           find research/recovered_data -maxdepth 6 -type f -printf '%p %s bytes\n' | sort || true
           cat research/recovered_data/recovery_status.json || true
+          cat research/recovered_data/river_geometry/sword_geometry_probe.json || true
           cat research/recovered_data/opera_rtc_catalog/opera_rtc_catalog_status.json || true
           cat research/recovered_data/opera_rtc_catalog/access_probe/opera_rtc_access_probe.json || true
           cat research/recovered_data/source_access_probe/asf_source_access_probe.json || true
