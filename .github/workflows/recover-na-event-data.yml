@@ -14,13 +14,13 @@ env:
   PYTHONUNBUFFERED: "1"
 
 concurrency:
-  group: recover-na-event-data-v15-${{ github.ref }}
+  group: recover-na-event-data-v16-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   recover:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas requests remotezip matplotlib numpy rasterio
+          pip install pandas requests remotezip matplotlib numpy rasterio scipy scikit-learn
 
       - name: Install required publication fonts
         continue-on-error: true
@@ -132,6 +132,10 @@ jobs:
         timeout-minutes: 5
         run: python research/build_label_sensitivity_audit.py
 
+      - name: Recompute transparent candidate water model
+        timeout-minutes: 20
+        run: python research/recompute_candidate_water_model.py
+
       - name: Show recovery status
         if: always()
         run: |
@@ -150,6 +154,7 @@ jobs:
           cat research/recovered_data/model_inputs/model_input_failure.json || true
           cat research/recovered_data/model_inputs/qa/model_input_qa.json || true
           cat research/recovered_data/label_audit/label_audit_status.json || true
+          cat research/recovered_data/candidate_model/candidate_model_status.json || true
           cat research/recovered_data/figure_ready/font_gate.json || true
           cat research/recovered_data/figure_ready/figure_preparation_status.json || true
           cat research/recovered_data/figure_outputs/figure_qa_status.json || true
