@@ -14,7 +14,7 @@ env:
   PYTHONUNBUFFERED: "1"
 
 concurrency:
-  group: recover-na-event-data-v17-${{ github.ref }}
+  group: recover-na-event-data-v18-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -115,6 +115,38 @@ jobs:
             mkdir -p research/recovered_data/figure_ready
             printf '%s\n' '{"figure01_02_preparation_skipped":true,"reason":"The official GRDC geometry endpoint was transiently unavailable in this run. Previously verified figure exports remain valid; no substitute geometry was invented."}' > research/recovered_data/figure_ready/figure_preparation_status.json
           fi
+
+      - name: Apply visual-review fixes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          supported = Path("research/render_supported_figures.py")
+          text = supported.read_text(encoding="utf-8")
+          replacements = {
+              '"GRDC_4146080": "下游 · Near Mount Vernon",': '"GRDC_4146080": "Downstream · Near Mount Vernon",',
+              '"GRDC_4146081": "上游 · Near Concrete",': '"GRDC_4146081": "Upstream · Near Concrete",',
+          }
+          for old, new in replacements.items():
+              if old not in text:
+                  raise RuntimeError(f"Expected station-label expression not found: {old}")
+              text = text.replace(old, new, 1)
+          supported.write_text(text, encoding="utf-8")
+
+          candidate = Path("research/render_candidate_model_figures.py")
+          text = candidate.read_text(encoding="utf-8")
+          old = 'grid06 = figure06.add_gridspec(1, 3, left=0.075, right=0.975, bottom=0.18, top=0.78, wspace=0.34)'
+          new = 'grid06 = figure06.add_gridspec(1, 3, left=0.075, right=0.925, bottom=0.18, top=0.78, wspace=0.42)'
+          if old not in text:
+              raise RuntimeError("Expected Figure 6 GridSpec expression not found")
+          text = text.replace(old, new, 1)
+          old = 'ax_brier.set_ylabel("Brier score", fontfamily=western, fontsize=8)'
+          new = 'ax_brier.set_ylabel("Brier", fontfamily=western, fontsize=8, labelpad=4)'
+          if old not in text:
+              raise RuntimeError("Expected Brier-axis label expression not found")
+          text = text.replace(old, new, 1)
+          candidate.write_text(text, encoding="utf-8")
+          PY
 
       - name: Build figure specifications and gated exports
         run: |
