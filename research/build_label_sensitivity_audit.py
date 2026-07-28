@@ -7,10 +7,12 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch, Rectangle
 import numpy as np
 import pandas as pd
 import rasterio
-from rasterio.transform import xy
+from rasterio.transform import array_bounds, xy
+from rasterio.warp import transform as warp_transform
 
 ROOT = Path(__file__).resolve().parent / "recovered_data"
 MODEL = ROOT / "model_inputs"
@@ -22,7 +24,10 @@ FIG.mkdir(parents=True, exist_ok=True)
 
 WATER_THRESHOLDS = [90, 95, 99]
 BLOCK_M = 10_000.0
-THIN = 3  # 90 m on the recovered 30 m grid
+THIN = 3
+LABEL_COLORS = ["#f3f3f3", "#d8c6a3", "#4c78a8"]
+DENSITY_COLORS = ["#eef1f3", "#c7d4dd", "#8fa9bb", "#55758c"]
+DENSITY_EDGES = [1, 1_000, 5_000, 10_000, np.inf]
 
 
 def sha256(path: Path) -> str:
@@ -45,6 +50,25 @@ def save_formats(fig, stem: str):
         fig.savefig(p, dpi=dpi, bbox_inches="tight", pad_inches=0.04)
         paths.append(p)
     return paths
+
+
+def apply_tick_font(axis, family: str) -> None:
+    for label in axis.get_xticklabels() + axis.get_yticklabels():
+        label.set_fontfamily(family)
+        label.set_fontsize(7)
+
+
+def add_scale_north(axis, bounds: tuple[float, float, float, float], western: str) -> None:
+    left, bottom, right, top = bounds
+    x0 = left + 0.06 * (right - left)
+    y0 = bottom + 0.07 * (top - bottom)
+    length = 10_000.0
+    axis.plot([x0, x0 + length], [y0, y0], color="#222222", linewidth=1.2, zorder=8)
+    tick = 0.008 * (top - bottom)
+    axis.plot([x0, x0], [y0 - tick, y0 + tick], color="#222222", linewidth=0.8, zorder=8)
+    axis.plot([x0 + length, x0 + length], [y0 - tick, y0 + tick], color="#222222", linewidth=0.8, zorder=8)
+    axis.text(x0 + length / 2, y0 + 0.018 * (top - bottom), "10 km", ha="center", va="bottom", fontfamily=western, fontsize=7)
+    axis.annotate("N", xy=(0.94, 0.91), xytext=(0.94, 0.78), xycoords="axes fraction", textcoords="axes fraction", ha="center", va="bottom", fontfamily=western, fontsize=8, arrowprops={"arrowstyle": "-|>", "linewidth": 0.9, "color": "#222222"})
 
 
 def main() -> None:
@@ -98,29 +122,67 @@ def main() -> None:
     t95 = t95.sort_values(["has_both_classes", "water", "land"], ascending=[False, False, False])
     selected = t95[t95["has_both_classes"]].head(20).copy()
     selected.to_csv(OUT / "candidate_20_blocks_threshold95.csv", index=False)
+    selected_ids = set(selected["block_id"].astype(str))
 
-    fig, axes = plt.subplots(1, 2, figsize=(7.0866, 3.2))
+    left, bottom, right, top = array_bounds(occurrence.shape[0], occurrence.shape[1], transform)
+    bounds = (left, bottom, right, top)
+    row_grid = rows[:, None]
+    col_grid = cols[None, :]
+    common_90 = common[row_grid, col_grid] == 1
+    land_90 = (occurrence[row_grid, col_grid] == 0) & (extent[row_grid, col_grid] == 0) & common_90
+    water_90 = (seasonality[row_grid, col_grid] == 12) & (occurrence[row_grid, col_grid] >= 95) & (extent[row_grid, col_grid] == 1) & common_90
+    label_map = np.zeros(common_90.shape, dtype=np.uint8)
+    label_map[land_90] = 1
+    label_map[water_90] = 2
+
+    fig, axes = plt.subplots(1, 2, figsize=(7.0866, 2.85), sharex=True, sharey=True)
     ax = axes[0]
-    ax.plot(summary["water_occurrence_threshold"], summary["water_samples_90m"], marker="o", linewidth=1.2)
-    ax.set_xlabel("JRC occurrence threshold (%)", fontfamily=western, fontsize=8)
-    ax.set_ylabel("Candidate permanent-water samples", fontfamily=western, fontsize=8)
-    ax.set_title("永久水体标签阈值敏感性", fontfamily=chinese, fontsize=9)
-    ax.grid(True, linewidth=0.35, alpha=0.4)
-    for lab in ax.get_xticklabels() + ax.get_yticklabels():
-        lab.set_fontfamily(western); lab.set_fontsize(7)
+    ax.imshow(label_map, extent=[left, right, bottom, top], origin="upper", interpolation="nearest", cmap=matplotlib.colors.ListedColormap(LABEL_COLORS), vmin=0, vmax=2, zorder=0)
+    for block in selected.itertuples(index=False):
+        bx, by = (int(part) for part in str(block.block_id).split("_", 1))
+        ax.add_patch(Rectangle((bx * BLOCK_M, by * BLOCK_M), BLOCK_M, BLOCK_M, fill=False, edgecolor="#7a3e65", linewidth=0.8, zorder=4))
+
+    stations_path = ROOT / "grdc_pair_station_metadata.csv"
+    if stations_path.exists():
+        stations = pd.read_csv(stations_path)
+        lon_col = "long_pp" if "long_pp" in stations.columns else "long_org"
+        lat_col = "lat_pp" if "lat_pp" in stations.columns else "lat_org"
+        sx, sy = warp_transform("EPSG:4326", profile["crs"], stations[lon_col].astype(float).tolist(), stations[lat_col].astype(float).tolist())
+        ax.scatter(sx, sy, s=18, marker="o", facecolor="#ffffff", edgecolor="#222222", linewidth=0.6, zorder=5)
+
+    ax.set_title("90 m 候选标签（JRC 阈值 95%）", fontfamily=chinese, fontsize=9)
+    ax.set_xlabel("Easting (m)", fontfamily=western, fontsize=8)
+    ax.set_ylabel("Northing (m)", fontfamily=western, fontsize=8)
+    ax.set_aspect("equal")
+    apply_tick_font(ax, western)
+    ax.legend(handles=[
+        Patch(facecolor=LABEL_COLORS[1], edgecolor="none", label="Candidate stable land"),
+        Patch(facecolor=LABEL_COLORS[2], edgecolor="none", label="Candidate permanent water"),
+    ], loc="upper left", frameon=True, facecolor="white", edgecolor="none", framealpha=0.86, prop={"family": western, "size": 5.8})
+    add_scale_north(ax, bounds, western)
 
     ax = axes[1]
-    both = blocks.groupby("threshold")["has_both_classes"].sum().reindex(WATER_THRESHOLDS)
-    ax.bar(np.arange(len(WATER_THRESHOLDS)), both.values, width=0.58, edgecolor="black", linewidth=0.5)
-    ax.set_xticks(np.arange(len(WATER_THRESHOLDS)))
-    ax.set_xticklabels([str(x) for x in WATER_THRESHOLDS], fontfamily=western, fontsize=7)
-    ax.set_xlabel("JRC occurrence threshold (%)", fontfamily=western, fontsize=8)
-    ax.set_ylabel("10 km blocks with both classes", fontfamily=western, fontsize=8)
-    ax.set_title("空间分块可用性", fontfamily=chinese, fontsize=9)
-    for lab in ax.get_yticklabels():
-        lab.set_fontfamily(western); lab.set_fontsize(7)
-    fig.suptitle("候选标签与 10 km 分块审计（非原始冻结标签复现）", fontfamily=chinese, fontsize=10)
-    fig.tight_layout(rect=[0, 0, 1, 0.92])
+    for block in t95.itertuples(index=False):
+        bx, by = (int(part) for part in str(block.block_id).split("_", 1))
+        total = int(block.water) + int(block.land)
+        density_class = int(np.digitize([total], DENSITY_EDGES[1:-1], right=False)[0])
+        density_class = min(density_class, len(DENSITY_COLORS) - 1)
+        ax.add_patch(Rectangle((bx * BLOCK_M, by * BLOCK_M), BLOCK_M, BLOCK_M, facecolor=DENSITY_COLORS[density_class], edgecolor="#ffffff", linewidth=0.25, zorder=1))
+        if str(block.block_id) in selected_ids:
+            ax.add_patch(Rectangle((bx * BLOCK_M, by * BLOCK_M), BLOCK_M, BLOCK_M, fill=False, edgecolor="#7a3e65", linewidth=0.85, zorder=3))
+    ax.set_xlim(left, right); ax.set_ylim(bottom, top)
+    ax.set_title("10 km 标签样本密度与双类分块", fontfamily=chinese, fontsize=9)
+    ax.set_xlabel("Easting (m)", fontfamily=western, fontsize=8)
+    ax.set_aspect("equal")
+    apply_tick_font(ax, western)
+    density_labels = ["1–999", "1,000–4,999", "5,000–9,999", "≥10,000"]
+    density_handles = [Patch(facecolor=color, edgecolor="#aaaaaa", linewidth=0.3, label=label) for color, label in zip(DENSITY_COLORS, density_labels)]
+    density_handles.append(Patch(facecolor="none", edgecolor="#7a3e65", label="Selected dual-class block"))
+    ax.legend(handles=density_handles, title="Candidate samples / block", loc="upper left", ncol=2, frameon=True, facecolor="white", edgecolor="none", framealpha=0.86, columnspacing=0.8, handlelength=1.4, prop={"family": western, "size": 5.2}, title_fontproperties={"family": western, "size": 5.4})
+
+    fig.suptitle("候选标签与 10 km 空间分块（公开源重建）", y=0.985, fontfamily=chinese, fontsize=10)
+    fig.text(0.5, 0.018, f"95% 阈值下真实可用双类分块为 {len(selected)} 个；未补造第 20 个分块。", ha="center", va="bottom", fontfamily=chinese, fontsize=6.8)
+    fig.subplots_adjust(left=0.075, right=0.995, bottom=0.22, top=0.78, wspace=0.14)
     rendered = save_formats(fig, "figure05_candidate_label_block_audit")
     plt.close(fig)
 
@@ -131,14 +193,17 @@ def main() -> None:
         "sampling_spacing_m": 90,
         "block_size_m": BLOCK_M,
         "thresholds_tested": WATER_THRESHOLDS,
+        "main_map_threshold": 95,
         "stable_land_candidate_rule": "occurrence == 0 and extent == 0",
         "permanent_water_candidate_rule": "seasonality == 12 and occurrence >= threshold and extent == 1",
         "candidate_blocks_at_threshold95": int(len(selected)),
+        "shortfall_vs_frozen_20_blocks": int(max(0, 20 - len(selected))),
+        "no_synthetic_block_added": True,
         "formal_export_allowed": True,
         "selected_western_family": western,
         "selected_chinese_family": chinese,
         "rendered_files": [p.name for p in rendered],
-        "scientific_constraint": "This is a transparent sensitivity audit using real rasters. It is not claimed to reproduce the unavailable frozen HPC label exclusions or the original model metrics.",
+        "scientific_constraint": "This spatial figure uses real JRC rasters and real 10 km block counts. It does not reproduce unavailable frozen HPC label exclusions or invent a twentieth block.",
         "qa_passed": bool(len(rendered) == 4 and len(selected) > 0 and summary["water_samples_90m"].min() > 0 and summary["stable_land_samples_90m"].min() > 0),
     }
     if not report["qa_passed"]:
