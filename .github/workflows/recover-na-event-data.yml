@@ -14,7 +14,7 @@ env:
   PYTHONUNBUFFERED: "1"
 
 concurrency:
-  group: recover-na-event-data-v12-${{ github.ref }}
+  group: recover-na-event-data-v13-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -78,6 +78,10 @@ jobs:
         timeout-minutes: 15
         run: python research/prepare_model_inputs.py
 
+      - name: Audit recovered model inputs
+        timeout-minutes: 5
+        run: python research/audit_model_inputs.py
+
       - name: Prepare validated figure inputs
         run: python research/prepare_figure_inputs.py
 
@@ -104,6 +108,7 @@ jobs:
           cat research/recovered_data/model_inputs/model_input_probe.json || true
           cat research/recovered_data/model_inputs/model_input_status.json || true
           cat research/recovered_data/model_inputs/model_input_failure.json || true
+          cat research/recovered_data/model_inputs/qa/model_input_qa.json || true
           cat research/recovered_data/figure_ready/font_gate.json || true
           cat research/recovered_data/figure_ready/figure_preparation_status.json || true
           cat research/recovered_data/figure_outputs/figure_qa_status.json || true
