@@ -2,13 +2,26 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
+import sys
 from pathlib import Path
 
-import geopandas as gpd
-import pandas as pd
-import rasterio
-from pyproj import Transformer
-from shapely.geometry import box
+try:
+    import geopandas as gpd
+    import pandas as pd
+    import rasterio
+    from pyproj import Transformer
+    from shapely.geometry import box
+except ModuleNotFoundError:
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "geopandas", "pyarrow"],
+        check=True,
+    )
+    import geopandas as gpd
+    import pandas as pd
+    import rasterio
+    from pyproj import Transformer
+    from shapely.geometry import box
 
 ROOT = Path(__file__).resolve().parent / "recovered_data"
 RIVER = ROOT / "river_geometry"
