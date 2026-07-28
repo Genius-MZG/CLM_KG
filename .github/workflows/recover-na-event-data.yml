@@ -14,7 +14,7 @@ env:
   PYTHONUNBUFFERED: "1"
 
 concurrency:
-  group: recover-na-event-data-v23-${{ github.ref }}
+  group: recover-na-event-data-v24-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -114,11 +114,14 @@ jobs:
 
       - name: Prepare validated figure inputs
         run: |
-          if [[ -s research/recovered_data/grdc_pair_basins_arcgis.geojson && -s research/recovered_data/grdc_pair_station_metadata.csv ]]; then
+          if [[ -s research/recovered_data/grdc_pair_event_window_long.csv \
+             && -s research/recovered_data/grdc_pair_basins_arcgis.geojson \
+             && -s research/recovered_data/grdc_pair_station_metadata.csv \
+             && -s research/recovered_data/opera_rtc_catalog/opera_rtc_expected_track_candidates.csv ]]; then
             python research/prepare_figure_inputs.py
           else
             mkdir -p research/recovered_data/figure_ready
-            printf '%s\n' '{"figure01_02_preparation_skipped":true,"reason":"The official GRDC geometry endpoint was transiently unavailable in this run. Previously verified figure exports remain valid; no substitute geometry was invented."}' > research/recovered_data/figure_ready/figure_preparation_status.json
+            printf '%s\n' '{"figure01_02_preparation_skipped":true,"reason":"One or more verified GRDC event-window inputs were transiently unavailable. RTC, model, and Figures 3-7/9 continue; no substitute hydrograph or geometry was invented."}' > research/recovered_data/figure_ready/figure_preparation_status.json
           fi
 
       - name: Apply visual-review fixes
@@ -163,10 +166,12 @@ jobs:
 
       - name: Build figure specifications and gated exports
         run: |
-          if [[ -s research/recovered_data/grdc_pair_basins_arcgis.geojson && -s research/recovered_data/grdc_pair_station_metadata.csv ]]; then
+          if [[ -s research/recovered_data/figure_ready/figure02_hydrograph_long.csv \
+             && -s research/recovered_data/grdc_pair_basins_arcgis.geojson \
+             && -s research/recovered_data/grdc_pair_station_metadata.csv ]]; then
             python research/render_supported_figures.py
           else
-            echo "Skipping Figure 1/2 regeneration because official GRDC geometry is absent in this transient run."
+            echo "Skipping Figure 1/2 regeneration because a verified GRDC event-window input is absent; downstream real-data figures continue."
           fi
 
       - name: Render five-phase RTC figures
