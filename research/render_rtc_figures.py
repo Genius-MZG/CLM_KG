@@ -136,28 +136,63 @@ def main() -> None:
     for tick in cbar.ax.get_yticklabels():
         tick.set_fontfamily(western)
         tick.set_fontsize(7)
-    fig.suptitle("五阶段 Sentinel-1 RTC 后向散射", fontfamily=chinese, fontsize=10, y=0.985)
+    fig.suptitle("五阶段 Sentinel-1 RTC 后向散射（公开数据重建）", fontfamily=chinese, fontsize=10, y=0.985)
     fig.subplots_adjust(left=0.012, right=0.965, top=0.79, bottom=0.035)
     rendered.extend(save_four_formats(fig, "figure03_five_phase_rtc_vv"))
     plt.close(fig)
 
+    # The available Planetary Computer RTC assets contain VV/VH COGs but no
+    # OPERA-style quality mask. Therefore this figure is deliberately limited
+    # to non-NoData data availability and must not be interpreted as strict
+    # sensor-quality coverage or as a replica of the original HPC mask result.
     coverage = [float(phase_masks[p].mean()) for p, _, _ in PHASES]
     common_fraction = float(common_valid.mean())
     fig, ax = plt.subplots(figsize=(7.0866, 3.35))
     x = np.arange(len(PHASES))
-    bars = ax.bar(x, np.asarray(coverage) * 100.0, width=0.58, edgecolor="black", linewidth=0.5)
-    ax.axhline(common_fraction * 100.0, color="black", linestyle="--", linewidth=0.9, label="Five-phase common valid")
+    bars = ax.bar(
+        x,
+        np.asarray(coverage) * 100.0,
+        width=0.58,
+        edgecolor="black",
+        linewidth=0.5,
+        color="#8C8C8C",
+    )
+    ax.axhline(
+        common_fraction * 100.0,
+        color="black",
+        linestyle="--",
+        linewidth=0.9,
+        label="Five-phase common data availability",
+    )
     ax.set_xticks(x)
     ax.set_xticklabels([label for _, label, _ in PHASES], fontfamily=chinese, fontsize=8)
-    ax.set_ylabel("Valid coverage (%)", fontfamily=western, fontsize=9)
-    ax.set_title("阶段有效覆盖率与共同有效区", fontfamily=chinese, fontsize=10)
+    ax.set_ylabel("Non-NoData coverage (%)", fontfamily=western, fontsize=9)
+    ax.set_title("AOI 内 RTC 数据可用覆盖", fontfamily=chinese, fontsize=10)
     ax.set_ylim(0, 102)
     set_numeric_tick_font(ax, western)
     for bar, value in zip(bars, coverage):
-        ax.text(bar.get_x() + bar.get_width() / 2, min(value * 100.0 + 0.8, 100.35), f"{value * 100.0:.2f}", ha="center", va="bottom", fontfamily=western, fontsize=7)
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            min(value * 100.0 + 0.8, 100.35),
+            f"{value * 100.0:.2f}",
+            ha="center",
+            va="bottom",
+            fontfamily=western,
+            fontsize=7,
+        )
+    ax.text(
+        0.01,
+        0.025,
+        "仅表示 VV/VH 非 NoData；不等同于 OPERA 质量掩膜或原 HPC 严格有效区",
+        transform=ax.transAxes,
+        ha="left",
+        va="bottom",
+        fontfamily=chinese,
+        fontsize=7,
+    )
     ax.legend(frameon=False, prop={"family": western, "size": 8}, loc="lower right")
     fig.tight_layout(pad=0.6)
-    rendered.extend(save_four_formats(fig, "figure04_valid_coverage"))
+    rendered.extend(save_four_formats(fig, "figure04_rtc_data_availability"))
     plt.close(fig)
 
     qa = {
@@ -168,10 +203,13 @@ def main() -> None:
         "crs": common_meta["crs"],
         "resolution_m": 30.0,
         "common_valid_pixels": int(common_valid.sum()),
-        "common_valid_fraction": common_fraction,
-        "phase_valid_fraction": {p: float(phase_masks[p].mean()) for p, _, _ in PHASES},
+        "common_data_availability_fraction": common_fraction,
+        "phase_data_availability_fraction": {p: float(phase_masks[p].mean()) for p, _, _ in PHASES},
+        "phase_mask_definition": "1 where reprojected VV and VH are finite and non-NoData; no OPERA quality mask is available in the Planetary Computer RTC item",
+        "strict_quality_mask_available": False,
+        "figure04_scope": "Data-availability QA only; not strict quality coverage and not the original HPC valid-area result",
         "vv_shared_display_percentiles_db": vv_limits,
-        "vh_shared_percentiles_db": vh_limits,
+        "vh_shared_display_percentiles_db": vh_limits,
         "all_rasters_real_and_present": bool(status.get("all_phase_rasters_complete")),
         "formal_export_allowed": bool(gate.get("formal_export_allowed")),
         "selected_western_family": western,
@@ -180,6 +218,7 @@ def main() -> None:
             "figure03_colorbar_has_dedicated_axis": True,
             "figure03_five_titles_complete": True,
             "figure04_chinese_ticks_preserved": True,
+            "figure04_quality_scope_disclosed": True,
         },
         "scientific_caveat": status.get("scientific_caveat"),
         "rendered_files": [p.name for p in rendered],
