@@ -116,8 +116,9 @@ def main() -> None:
     bars = ax_bar.bar(x, fractions * 100, width=0.58, edgecolor="black", linewidth=0.5, color="#8C8C8C")
     common_pct = common.mean() * 100
     ax_bar.axhline(common_pct, color="black", linestyle="--", linewidth=0.9)
-    ax_bar.text(0.98, 0.08, f"Five-phase common: {common_pct:.1f}%", transform=ax_bar.transAxes,
-                ha="right", va="bottom", fontfamily=western, fontsize=6.8)
+    ax_bar.text(0.04, 0.08, f"Common: {common_pct:.1f}%", transform=ax_bar.transAxes,
+                ha="left", va="bottom", fontfamily=western, fontsize=6.8,
+                bbox={"boxstyle": "round,pad=0.20", "facecolor": "white", "edgecolor": "black", "linewidth": 0.45, "alpha": 0.90})
     ax_bar.set_xticks(x)
     ax_bar.set_xticklabels([label for _, label in PHASES], fontfamily=chinese, fontsize=7, rotation=28, ha="right")
     ax_bar.set_ylabel("Non-NoData coverage (%)", fontfamily=western, fontsize=8)
@@ -145,7 +146,7 @@ def main() -> None:
         "strict_quality_mask_available": False,
         "scope": "Spatial non-NoData availability only; not an OPERA quality mask or original HPC strict valid-area result",
         "formal_export_allowed": True,
-        "visual_review_fixes": ["uniform-map annotation", "10-km scale bar", "north arrow", "unclipped common-coverage annotation"],
+        "visual_review_fixes": ["uniform-map annotation", "10-km scale bar", "north arrow", "boxed common-coverage annotation away from labels"],
         "rendered_files": rendered,
         "sha256": {name: digest(OUT / name) for name in rendered},
         "qa_passed": crs == "EPSG:32610" and len(rendered) == 4,
