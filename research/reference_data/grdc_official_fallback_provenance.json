@@ -1,0 +1,14 @@
+{
+  "description": "Topology-preserving simplified fallback derived programmatically from the official GRDC ArcGIS FeatureServer response used in successful workflow run 47.",
+  "official_source_url": "https://geoportal.bafg.de/arcgis3/rest/services/GRDC/GRDC_basins_changeid/FeatureServer/0/query",
+  "query": "grdc_no IN (4146081,4146080); outFields=*; returnGeometry=true; outSR=4326; f=geojson",
+  "source_snapshot_sha256": "3ddc2260a5ec834a8fa8d0b6e1347c45c8329dfbd98ea7cb41e113731b3a2684",
+  "fallback_sha256": "3dd0cb825a2b7731afad17747c89efd6e09f09ebbe5fad1e40091b9183a9426d",
+  "simplification": "Shapely simplify(tolerance=0.002 degrees, preserve_topology=True)",
+  "relative_planar_area_error_by_feature": [
+    5.8366789790615574e-05,
+    0.00010760659681227656
+  ],
+  "feature_count": 2,
+  "intended_use": "Network-failure fallback for study-area overview rendering and station-context recovery only; not a replacement for official full-resolution basin geometry in quantitative spatial analysis."
+}

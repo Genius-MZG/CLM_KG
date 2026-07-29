@@ -14,13 +14,13 @@ env:
   PYTHONUNBUFFERED: "1"
 
 concurrency:
-  group: recover-na-event-data
-  cancel-in-progress: false
+  group: recover-na-event-data-v24-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   recover:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 110
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,16 +33,193 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas requests remotezip
+          pip install pandas requests remotezip matplotlib numpy rasterio scipy scikit-learn
+
+      - name: Install required publication fonts
+        continue-on-error: true
+        run: |
+          sudo apt-get update -qq
+          echo msttcorefonts msttcorefonts/accepted-mscorefonts-eula select true | sudo debconf-set-selections
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends fonts-arphic-gkai00mp fonts-arphic-ukai ttf-mscorefonts-installer
+          sudo fc-cache -f -v >/dev/null
+          fc-list | grep -Ei 'Times New Roman|AR PL KaitiM GB|AR PL UKai|KaiTi|STKaiti' || true
 
       - name: Recover and audit public data
-        run: python research/recover_na_event_data.py
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("research/recover_na_event_data.py")
+          text = path.read_text(encoding="utf-8")
+          old = 'timeout=180, headers={"User-Agent": "NorthAmericaFloodplainResearch/1.0"}'
+          new = 'timeout=(10, 30), headers={"User-Agent": "NorthAmericaFloodplainResearch/1.0"}'
+          if old not in text:
+              raise RuntimeError("Expected GRDC timeout expression was not found")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+          python research/recover_na_event_data.py
+
+      - name: Probe official SWORD river geometry package
+        timeout-minutes: 15
+        continue-on-error: true
+        run: python research/probe_sword_river_geometry.py
+
+      - name: Recover OPERA RTC catalogue
+        run: python research/recover_opera_rtc_catalog.py
+
+      - name: Probe OPERA RTC raster access
+        timeout-minutes: 2
+        run: python research/probe_opera_rtc_access.py
+
+      - name: Probe ASF GRD and burst access
+        timeout-minutes: 2
+        continue-on-error: true
+        run: |
+          if [[ -s research/recovered_data/asf_sentinel1_candidates.csv ]]; then
+            python research/probe_asf_grd_burst_access.py
+          else
+            mkdir -p research/recovered_data/source_access_probe
+            printf '%s\n' '{"probe_skipped":true,"reason":"ASF catalogue was not produced because the transient GRDC station-coordinate request failed; this legacy authenticated path is not an input to the Planetary Computer RTC reconstruction."}' > research/recovered_data/source_access_probe/asf_source_access_probe.json
+          fi
+
+      - name: Probe public Sentinel-1 RODA fallback
+        timeout-minutes: 3
+        continue-on-error: true
+        run: |
+          if [[ -s research/recovered_data/asf_sentinel1_candidates.csv ]]; then
+            python research/probe_public_s1_roda.py
+          else
+            mkdir -p research/recovered_data/source_access_probe
+            printf '%s\n' '{"probe_skipped":true,"reason":"Exact GRD scene names were unavailable in this run; the public RODA legacy check is decoupled from the verified Planetary Computer RTC path."}' > research/recovered_data/source_access_probe/public_s1_roda_probe.json
+          fi
+
+      - name: Probe Planetary Computer Sentinel-1 fallback
+        timeout-minutes: 5
+        run: python research/probe_planetary_computer_s1.py
+
+      - name: Extract five-phase Planetary Computer RTC rasters
+        timeout-minutes: 20
+        run: python research/extract_planetary_computer_rtc.py
+
+      - name: Probe real water-label and DEM model inputs
+        timeout-minutes: 5
+        run: python research/probe_model_inputs.py
+
+      - name: Recover JRC and DEM model inputs
+        timeout-minutes: 15
+        run: python research/prepare_model_inputs.py
+
+      - name: Audit recovered model inputs
+        timeout-minutes: 5
+        run: python research/audit_model_inputs.py
+
+      - name: Prepare validated figure inputs
+        run: |
+          if [[ -s research/recovered_data/grdc_pair_event_window_long.csv \
+             && -s research/recovered_data/grdc_pair_basins_arcgis.geojson \
+             && -s research/recovered_data/grdc_pair_station_metadata.csv \
+             && -s research/recovered_data/opera_rtc_catalog/opera_rtc_expected_track_candidates.csv ]]; then
+            python research/prepare_figure_inputs.py
+          else
+            mkdir -p research/recovered_data/figure_ready
+            printf '%s\n' '{"figure01_02_preparation_skipped":true,"reason":"One or more verified GRDC event-window inputs were transiently unavailable. RTC, model, and Figures 3-7/9 continue; no substitute hydrograph or geometry was invented."}' > research/recovered_data/figure_ready/figure_preparation_status.json
+          fi
+
+      - name: Apply visual-review fixes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          supported = Path("research/render_supported_figures.py")
+          text = supported.read_text(encoding="utf-8")
+          replacements = {
+              '"GRDC_4146080": "下游 · Near Mount Vernon",': '"GRDC_4146080": "Downstream · Near Mount Vernon",',
+              '"GRDC_4146081": "上游 · Near Concrete",': '"GRDC_4146081": "Upstream · Near Concrete",',
+          }
+          for old, new in replacements.items():
+              if old not in text:
+                  raise RuntimeError(f"Expected station-label expression not found: {old}")
+              text = text.replace(old, new, 1)
+          supported.write_text(text, encoding="utf-8")
+
+          candidate = Path("research/render_candidate_model_figures.py")
+          text = candidate.read_text(encoding="utf-8")
+          replacements = [
+              ('import matplotlib.pyplot as plt\n', 'import matplotlib.pyplot as plt\nfrom matplotlib.colors import BoundaryNorm, ListedColormap\n'),
+              ('grid06 = figure06.add_gridspec(1, 3, left=0.075, right=0.975, bottom=0.18, top=0.78, wspace=0.34)', 'grid06 = figure06.add_gridspec(1, 3, left=0.075, right=0.925, bottom=0.18, top=0.78, wspace=0.42)'),
+              ('ax_brier.set_ylabel("Brier score", fontfamily=western, fontsize=8)', 'ax_brier.set_ylabel("Brier", fontfamily=western, fontsize=8, labelpad=4)'),
+              ('    figure07 = plt.figure(figsize=(WIDTH_IN, 2.65))', '    figure07 = plt.figure(figsize=(WIDTH_IN, 1.95))'),
+              ('        bottom=0.06,\n        top=0.76,', '        bottom=0.055,\n        top=0.69,'),
+              ('    image = None\n    for axis, (phase, label, date_text) in zip(axes07, PHASES):', '    probability_boundaries = np.asarray([0.0, 0.20, 0.35, 0.50, 0.65, 1.000001])\n    probability_cmap = ListedColormap(["#f4f4f4", "#d9e6f2", "#9ebcda", "#4f81a8", "#1f4e79"])\n    probability_norm = BoundaryNorm(probability_boundaries, probability_cmap.N, clip=True)\n    image = None\n    for axis, (phase, label, date_text) in zip(axes07, PHASES):'),
+              ('            cmap="cividis",\n            vmin=0,\n            vmax=1,', '            cmap=probability_cmap,\n            norm=probability_norm,'),
+              ('            axis.contour(connected_maps[phase].astype("uint8"), levels=[0.5], colors="#ffffff", linewidths=0.45)', '            axis.contour(connected_maps[phase].astype("uint8"), levels=[0.5], colors="#a33b4b", linewidths=0.60)'),
+              ('    colorbar = figure07.colorbar(image, cax=colorbar_axis)\n', '    colorbar = figure07.colorbar(image, cax=colorbar_axis, boundaries=probability_boundaries, ticks=[0.0, 0.20, 0.35, 0.50, 0.65, 1.0], spacing="proportional")\n'),
+              ('    colorbar.set_label("Candidate water probability", fontfamily=western, fontsize=8)\n', '    colorbar.set_label("Candidate water probability class", fontfamily=western, fontsize=8)\n'),
+              ('        "白线：候选连通水体边界；黑线：GRDC 下游流域范围",', '        "暗红线：候选连通水体边界；黑线：GRDC 下游流域范围",'),
+              ('        0.855,', '        0.805,'),
+          ]
+          for old, new in replacements:
+              if old not in text:
+                  raise RuntimeError(f"Expected candidate-figure expression not found: {old[:80]}")
+              text = text.replace(old, new, 1)
+          candidate.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Build figure specifications and gated exports
+        run: |
+          if [[ -s research/recovered_data/figure_ready/figure02_hydrograph_long.csv \
+             && -s research/recovered_data/grdc_pair_basins_arcgis.geojson \
+             && -s research/recovered_data/grdc_pair_station_metadata.csv ]]; then
+            python research/render_supported_figures.py
+          else
+            echo "Skipping Figure 1/2 regeneration because a verified GRDC event-window input is absent; downstream real-data figures continue."
+          fi
+
+      - name: Render five-phase RTC figures
+        timeout-minutes: 10
+        run: python research/render_rtc_figures.py
+
+      - name: Render spatial RTC availability figure
+        timeout-minutes: 5
+        run: python research/render_rtc_availability_figure.py
+
+      - name: Audit candidate JRC labels and spatial blocks
+        timeout-minutes: 5
+        run: python research/build_label_sensitivity_audit.py
+
+      - name: Recompute transparent candidate water model
+        timeout-minutes: 20
+        run: python research/recompute_candidate_water_model.py
+
+      - name: Render candidate model performance and maps
+        timeout-minutes: 10
+        run: python research/render_candidate_model_figures.py
 
       - name: Show recovery status
         if: always()
         run: |
-          find research/recovered_data -maxdepth 3 -type f -printf '%p %s bytes\n' | sort || true
+          find research/recovered_data -maxdepth 6 -type f -printf '%p %s bytes\n' | sort || true
           cat research/recovered_data/recovery_status.json || true
+          cat research/recovered_data/river_geometry/sword_geometry_probe.json || true
+          cat research/recovered_data/opera_rtc_catalog/opera_rtc_catalog_status.json || true
+          cat research/recovered_data/opera_rtc_catalog/access_probe/opera_rtc_access_probe.json || true
+          cat research/recovered_data/source_access_probe/asf_source_access_probe.json || true
+          cat research/recovered_data/source_access_probe/public_s1_roda_probe.json || true
+          cat research/recovered_data/source_access_probe/planetary_computer_s1_probe.json || true
+          cat research/recovered_data/planetary_computer_rtc/rtc_extraction_progress.json || true
+          cat research/recovered_data/planetary_computer_rtc/rtc_extraction_failure.json || true
+          cat research/recovered_data/planetary_computer_rtc/rtc_extraction_status.json || true
+          cat research/recovered_data/model_inputs/model_input_probe.json || true
+          cat research/recovered_data/model_inputs/model_input_status.json || true
+          cat research/recovered_data/model_inputs/model_input_failure.json || true
+          cat research/recovered_data/model_inputs/qa/model_input_qa.json || true
+          cat research/recovered_data/label_audit/label_audit_status.json || true
+          cat research/recovered_data/candidate_model/candidate_model_status.json || true
+          cat research/recovered_data/figure_ready/font_gate.json || true
+          cat research/recovered_data/figure_ready/figure_preparation_status.json || true
+          cat research/recovered_data/figure_outputs/figure_qa_status.json || true
+          cat research/recovered_data/figure_outputs/figure03_04_qa_status.json || true
+          cat research/recovered_data/figure_outputs/figure04_spatial_qa_status.json || true
+          cat research/recovered_data/figure_outputs/candidate_model_figure_qa.json || true
 
       - name: Upload recovery artifact
         if: always()
