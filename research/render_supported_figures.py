@@ -71,6 +71,9 @@ def apply_tick_font(axis, family: str) -> None:
     for label in [*axis.get_xticklabels(), *axis.get_yticklabels()]:
         label.set_fontfamily(family)
         label.set_fontsize(8)
+    for offset_text in (axis.xaxis.get_offset_text(), axis.yaxis.get_offset_text()):
+        offset_text.set_fontfamily(family)
+        offset_text.set_fontsize(8)
 
 
 def station_id_from_feature(feature: dict) -> str:
@@ -126,7 +129,15 @@ def render_map(basins: dict, stations: pd.DataFrame, rivers: dict | None, wester
         station_id = f"GRDC_{int(float(row['grdc_no']))}"
         color = FLOW_COLORS.get(station_id, "#333333")
         axis.scatter([row[lon_col]], [row[lat_col]], s=34, marker="o", color=color, edgecolor="white", linewidth=0.6, zorder=4)
-        axis.annotate(STATION_ROLE_LABELS.get(station_id, station_id), (row[lon_col], row[lat_col]), xytext=(5, 5), textcoords="offset points", fontsize=8, fontfamily=western_font)
+        axis.annotate(
+            STATION_ROLE_LABELS.get(station_id, station_id),
+            (row[lon_col], row[lat_col]),
+            xytext=(6, 6),
+            textcoords="offset points",
+            fontsize=8,
+            fontfamily=western_font,
+            bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.72, "pad": 0.5},
+        )
 
     axis.set_xlabel("Longitude", fontfamily=western_font, fontsize=9)
     axis.set_ylabel("Latitude", fontfamily=western_font, fontsize=9)
@@ -159,7 +170,7 @@ def render_hydrograph(flow: pd.DataFrame, western_font: str, chinese_font: str) 
         axis.axvline(timestamp, linewidth=0.7, linestyle="--", color="#666666")
         axis.text(timestamp, label_y[phase_name], PHASE_LABELS[phase_name], rotation=90, transform=axis.get_xaxis_transform(), ha=label_ha[phase_name], va="top", fontsize=7, fontfamily=chinese_font)
     axis.set_xlabel("Date", fontfamily=western_font, fontsize=9)
-    axis.set_ylabel(r"Discharge (m$^3$ s$^{-1}$)", fontfamily=western_font, fontsize=9)
+    axis.set_ylabel("Discharge (m³ s⁻¹)", fontfamily=western_font, fontsize=9)
     axis.set_title("双站水文过程与五期卫星观测", fontfamily=chinese_font, fontsize=10)
     axis.legend(frameon=False, prop={"family": western_font, "size": 8}, loc="upper left")
     apply_tick_font(axis, western_font)
