@@ -56,6 +56,9 @@ def apply_tick_font(axis, family: str) -> None:
     for label in axis.get_xticklabels() + axis.get_yticklabels():
         label.set_fontfamily(family)
         label.set_fontsize(7)
+    for offset_text in (axis.xaxis.get_offset_text(), axis.yaxis.get_offset_text()):
+        offset_text.set_fontfamily(family)
+        offset_text.set_fontsize(7)
 
 
 def add_scale_north(axis, bounds: tuple[float, float, float, float], western: str) -> None:
